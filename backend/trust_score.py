@@ -31,50 +31,67 @@ def calculate_trust_score(dossier: dict) -> dict:
     """
     factors: list[ScoreFactor] = []
     extracted = dossier.get("extracted", {})
-    raw_summary = dossier.get("raw_data_summary", {})
+    raw_data = dossier.get("raw_data_summary", {})
+    raw_summary = _normalize_raw_summary(raw_data)
+    established = _has_established_footprint(raw_summary, extracted)
 
     # ── Factor 1: Domain age vs founding year (20 pts) ───────────────────────
     factors.append(_score_domain_age(extracted, raw_summary))
 
     # ── Factor 2: Employee count consistency (15 pts) ─────────────────────────
-    factors.append(_score_employee_consistency(extracted))
+    factors.append(_score_employee_consistency(extracted, established))
 
     # ── Factor 3: Social media presence (10 pts) ──────────────────────────────
-    factors.append(_score_social_presence(extracted))
+    factors.append(_score_social_presence(extracted, established))
 
     # ── Factor 4: News coverage (10 pts) ─────────────────────────────────────
-    factors.append(_score_news_coverage(raw_summary))
+    factors.append(_score_news_coverage(raw_summary, established))
 
     # ── Factor 5: Address verification (15 pts) ───────────────────────────────
-    factors.append(_score_address(extracted))
+    factors.append(_score_address(extracted, established))
 
     # ── Factor 6: Review sentiment (10 pts) ───────────────────────────────────
-    factors.append(_score_reviews(extracted, raw_summary))
+    factors.append(_score_reviews(extracted, raw_summary, established))
 
     # ── Factor 7: Client verification (10 pts) ────────────────────────────────
-    factors.append(_score_client_claims(extracted))
+    factors.append(_score_client_claims(extracted, raw_summary, established))
 
-    # ── Factor 8: Document integrity (10 pts) ─────────────────────────────────
-    factors.append(_score_documents(extracted))
+    # ── Factor 8: Digital footprint depth (10 pts) ───────────────────────────
+    factors.append(_score_digital_footprint(extracted, raw_summary))
+
+    # ── Factor 9: Global Recognition / Wikipedia (20 pts) ────────────────────
+    global_factor = _score_global_recognition(raw_summary)
+    factors.append(global_factor)
 
     # ── Contradiction penalty (up to -20 pts) ────────────────────────────────
     contradiction_penalty = _calculate_contradiction_penalty(dossier.get("contradictions", []))
 
     # ── Total ─────────────────────────────────────────────────────────────────
     raw_score = sum(f.score for f in factors)
-    final_score = max(0, min(100, raw_score - contradiction_penalty))
+    
+    # Apply AI score adjustment (based on reading actual content)
+    ai_adjustment = dossier.get("score_adjustment", 0)
+    
+    final_score = max(0, min(100, raw_score - contradiction_penalty + ai_adjustment))
 
-    red_flags = [f.reason for f in factors if f.is_red_flag]
+    # Also use AI's fraud and legitimacy signals for red flags
+    ai_fraud_signals = dossier.get("fraud_signals", [])
+    ai_legit_signals = dossier.get("legitimacy_signals", [])
+
+    # Combine red flags: score-based + AI-detected
+    red_flags = [f.reason for f in factors if f.is_red_flag] + ai_fraud_signals
 
     # Add contradiction-based red flags
     for c in dossier.get("contradictions", []):
-        if c.get("status") == "MISMATCH" and c.get("severity") == "HIGH":
-            red_flags.append(f"Contradiction: {c['claim']} — {c['evidence']}")
+        if c.get("severity") == "HIGH":
+            claim = c.get("claimed") or c.get("claim") or c.get("field", "Claim")
+            red_flags.append(f"Contradiction: {claim} - {c.get('evidence', 'conflicting evidence found')}")
 
     risk_level = (
-        "LOW" if final_score >= 70
-        else "MEDIUM" if final_score >= 40
-        else "HIGH"
+        "LOW RISK" if final_score >= 75
+        else "LOW-MEDIUM" if final_score >= 55
+        else "MEDIUM RISK" if final_score >= 30
+        else "HIGH RISK"
     )
 
     breakdown = {
@@ -95,6 +112,9 @@ def calculate_trust_score(dossier: dict) -> dict:
         "risk_level": risk_level,
         "breakdown": breakdown,
         "red_flags": red_flags[:10],  # Top 10 red flags
+        "legitimacy_signals": ai_legit_signals,
+        "legitimacy_verdict": dossier.get("legitimacy_verdict", "UNCERTAIN"),
+        "ai_reasoning": dossier.get("ai_reasoning", ""),
         "factors": [
             {
                 "name": f.name,
@@ -109,6 +129,65 @@ def calculate_trust_score(dossier: dict) -> dict:
 
 
 # ── Individual scoring functions ──────────────────────────────────────────────
+
+def _normalize_raw_summary(raw_data: dict) -> dict:
+    """Accept either the full raw scrape object or the compact summary object."""
+    raw_data = raw_data or {}
+    summary = raw_data.get("summary", {}) if isinstance(raw_data, dict) else {}
+    whois = raw_data.get("whois", {}) if isinstance(raw_data, dict) else {}
+    pages = raw_data.get("pages", []) if isinstance(raw_data, dict) else []
+    reviews = raw_data.get("reviews", {}) if isinstance(raw_data, dict) else {}
+
+    return {
+        "whois_creation_year": (
+            raw_data.get("whois_creation_year")
+            or summary.get("whois_creation_year")
+            or whois.get("creation_year")
+        ),
+        "domain_age_days": (
+            raw_data.get("domain_age_days")
+            or summary.get("domain_age_days")
+            or whois.get("domain_age_days")
+        ),
+        "news_article_count": (
+            raw_data.get("news_article_count")
+            or summary.get("news_article_count")
+            or raw_data.get("news_count", 0)
+        ),
+        "fraud_news_count": (
+            raw_data.get("fraud_news_count")
+            or summary.get("fraud_news_count")
+            or 0
+        ),
+        "reviews": reviews or summary.get("reviews", {}),
+        "pages_scraped": raw_data.get("pages_scraped") or summary.get("pages_scraped") or len(pages),
+        "scraped_sources": summary.get("scraped_sources") or [p.get("source", "site_page") for p in pages],
+        "crawl_stats": raw_data.get("crawl_stats") or summary.get("crawl_stats", {}),
+        "wikipedia": raw_data.get("wikipedia", {}),
+    }
+
+
+def _has_established_footprint(raw_summary: dict, extracted: dict) -> bool:
+    domain_age_days = raw_summary.get("domain_age_days") or 0
+    return (
+        domain_age_days >= 365 * 5
+        or raw_summary.get("news_article_count", 0) >= 3
+        or raw_summary.get("pages_scraped", 0) >= 8
+        or bool(extracted.get("linkedin_profile_exists") or extracted.get("has_linkedin"))
+        or raw_summary.get("wikipedia", {}).get("found", False)
+    )
+
+def _score_global_recognition(raw_summary: dict) -> ScoreFactor:
+    MAX = 20
+    wiki = raw_summary.get("wikipedia", {})
+    if wiki.get("found"):
+        return ScoreFactor(
+            "global_recognition", MAX, MAX,
+            "Company is globally recognized (Wikipedia page found)",
+            False
+        )
+    return ScoreFactor("global_recognition", 0, MAX, "No global Wikipedia page found", False)
+
 
 def _score_domain_age(extracted: dict, raw_summary: dict) -> ScoreFactor:
     MAX = 20
@@ -136,7 +215,7 @@ def _score_domain_age(extracted: dict, raw_summary: dict) -> ScoreFactor:
 
     # Cross-check with claimed founding year
     if claimed_year and domain_year:
-        year_diff = abs(domain_year - claimed_year)
+        year_diff = domain_year - claimed_year
         if year_diff > 2:
             return ScoreFactor(
                 "domain_age", 0, MAX,
@@ -159,26 +238,20 @@ def _score_domain_age(extracted: dict, raw_summary: dict) -> ScoreFactor:
     return ScoreFactor("domain_age", score, MAX, f"Domain is {domain_age_days // 365} years old", False)
 
 
-def _score_employee_consistency(extracted: dict) -> ScoreFactor:
+def _score_employee_consistency(extracted: dict, established: bool = False) -> ScoreFactor:
     MAX = 15
     claimed = extracted.get("employee_count_claimed")
     linkedin = extracted.get("employee_count_linkedin")
 
-    if claimed is None and linkedin is None:
-        return ScoreFactor("employee_consistency", 5, MAX, "No employee count data available", False)
-
-    if claimed is None:
-        return ScoreFactor("employee_consistency", 8, MAX, f"LinkedIn shows {linkedin} employees (no website claim to compare)", False)
-
-    if linkedin is None:
-        return ScoreFactor("employee_consistency", 8, MAX, f"Website claims {claimed} employees (no LinkedIn data)", False)
+    if claimed is None or linkedin is None:
+        return ScoreFactor("employee_consistency", 8, MAX, "Employee data unavailable — neutral score", False)
 
     # Parse numbers
     try:
         claimed_n = int(str(claimed).replace("+", "").replace(",", "").strip())
         linkedin_n = int(str(linkedin).replace("+", "").replace(",", "").strip())
     except (ValueError, AttributeError):
-        return ScoreFactor("employee_consistency", 5, MAX, "Could not parse employee count numbers", False)
+        return ScoreFactor("employee_consistency", 8, MAX, "Could not parse employee count numbers — neutral score", False)
 
     if linkedin_n == 0:
         return ScoreFactor(
@@ -206,55 +279,48 @@ def _score_employee_consistency(extracted: dict) -> ScoreFactor:
     return ScoreFactor("employee_consistency", MAX, MAX, f"Employee count consistent: {claimed_n} claimed, {linkedin_n} on LinkedIn", False)
 
 
-def _score_social_presence(extracted: dict) -> ScoreFactor:
+def _score_social_presence(extracted: dict, established: bool = False) -> ScoreFactor:
     MAX = 10
     score = 0
     notes = []
 
-    # LinkedIn — check profile_exists from raw linkedin data, not just has_linkedin text flag
     linkedin_exists = extracted.get("linkedin_profile_exists", False) or extracted.get("has_linkedin", False)
     if linkedin_exists:
-        score += 5
-        notes.append("LinkedIn page verified")
-    else:
-        notes.append("No LinkedIn company page detected")
-
+        score += 4
+        notes.append("LinkedIn")
     if extracted.get("has_twitter"):
         score += 2
-        notes.append("Twitter/X presence")
-
-    if extracted.get("linkedin_followers", 0) > 500:
+        notes.append("Twitter")
+    if extracted.get("has_github"):
         score += 2
-        notes.append(f"{extracted['linkedin_followers']} LinkedIn followers")
-
-    if extracted.get("linkedin_active"):
+        notes.append("GitHub")
+    if extracted.get("has_youtube", False):
         score += 1
-        notes.append("Active LinkedIn posting")
+        notes.append("YouTube")
+    if extracted.get("has_crunchbase", False):
+        score += 1
+        notes.append("Crunchbase")
 
-    # Only flag as red flag if truly no social presence at all
-    is_red_flag = score == 0 and not linkedin_exists
-    return ScoreFactor(
-        "social_presence", score, MAX,
-        " | ".join(notes) or "No social presence found",
-        is_red_flag
-    )
+    domain_age_days = extracted.get("domain_age_days", 0) or 0
+    is_red_flag = (score == 0 and domain_age_days < 730)
+    
+    if score == 0:
+        return ScoreFactor("social_presence", 0, MAX, "No social presence found", is_red_flag)
+    
+    return ScoreFactor("social_presence", min(MAX, score), MAX, f"Social presence found: {', '.join(notes)}", is_red_flag)
 
 
-def _score_news_coverage(raw_summary: dict) -> ScoreFactor:
+def _score_news_coverage(raw_summary: dict, established: bool = False) -> ScoreFactor:
     MAX = 10
     news_count = raw_summary.get("news_article_count", 0)
     fraud_count = raw_summary.get("fraud_news_count", 0)
 
     if fraud_count > 0:
-        return ScoreFactor(
-            "news_coverage", 0, MAX,
-            f"{fraud_count} fraud/scam-related news article(s) found",
-            is_red_flag=True,
-        )
+        return ScoreFactor("news_coverage", 0, MAX, f"{fraud_count} fraud/scam-related news article(s) found", is_red_flag=True)
 
     if news_count == 0:
-        return ScoreFactor("news_coverage", 2, MAX, "No news coverage found — unverifiable reputation", False)
-    elif news_count < 3:
+        return ScoreFactor("news_coverage", 3, MAX, "No news coverage found — neutral score", False)
+    elif news_count < 4:
         return ScoreFactor("news_coverage", 5, MAX, f"{news_count} news articles found", False)
     elif news_count < 10:
         return ScoreFactor("news_coverage", 8, MAX, f"{news_count} news articles found", False)
@@ -262,98 +328,105 @@ def _score_news_coverage(raw_summary: dict) -> ScoreFactor:
         return ScoreFactor("news_coverage", MAX, MAX, f"{news_count}+ news articles — well covered", False)
 
 
-def _score_address(extracted: dict) -> ScoreFactor:
+def _score_address(extracted: dict, established: bool = False) -> ScoreFactor:
     MAX = 15
 
     if extracted.get("address_suspicious"):
-        shared_count = extracted.get("address_shared_companies", 0)
-        if shared_count > 3:
-            return ScoreFactor(
-                "address_verification", 0, MAX,
-                f"Address shared with {shared_count} other companies — possible shell network",
-                is_red_flag=True,
-            )
-        return ScoreFactor(
-            "address_verification", 3, MAX,
-            "Registered address flagged as suspicious",
-            is_red_flag=True,
-        )
+        return ScoreFactor("address_verification", 0, MAX, "Registered address flagged as suspicious or shell network", is_red_flag=True)
 
     if not extracted.get("addresses"):
-        return ScoreFactor("address_verification", 5, MAX, "No registered address found on website", False)
+        return ScoreFactor("address_verification", 5, MAX, "No registered address found on website — neutral score", False)
 
-    if extracted.get("address_verified"):
-        return ScoreFactor("address_verification", MAX, MAX, "Address verified on Google Maps", False)
-
-    return ScoreFactor("address_verification", 8, MAX, "Address found but not independently verified", False)
+    return ScoreFactor("address_verification", 10, MAX, "Address found on website", False)
 
 
-def _score_reviews(extracted: dict, raw_data: dict = {}) -> ScoreFactor:
+def _score_reviews(extracted: dict, raw_data: dict = {}, established: bool = False) -> ScoreFactor:
     MAX = 10
     reviews = raw_data.get("reviews", {})
-    tp = reviews.get("trustpilot", {})
-    gd = reviews.get("glassdoor", {})
     reddit = reviews.get("reddit", {})
     
-    score = 0
+    score = 5
     notes = []
     
-    # 1. Trustpilot (Weight: 4)
-    if tp.get("found") and tp.get("rating"):
-        rating = tp["rating"]
-        if rating >= 4.0: score += 4
-        elif rating >= 3.0: score += 2
-        else: score -= 5 # Penalty
-        notes.append(f"Trustpilot: {rating}/5")
+    FRAUD_KEYWORDS = [
+        "scam", "fraud", "fake", "cheated", "money not returned",
+        "disappeared", "no refund", "ponzi", "fake company",
+        "not registered", "illegal", "police complaint", "fir filed",
+        "cyber crime", "blacklist", "avoid at all costs"
+    ]
+    SERVICE_COMPLAINT_KEYWORDS = [
+        "bad service", "poor quality", "delayed", "not happy",
+        "overpriced", "rude", "disappointed", "not recommended"
+    ]
+    
+    neg_posts = reddit.get("negative_posts", [])
+    fraud_posts = [p for p in neg_posts if any(kw in p.get("title", "").lower() for kw in FRAUD_KEYWORDS)]
+    complaint_posts = [p for p in neg_posts if any(kw in p.get("title", "").lower() for kw in SERVICE_COMPLAINT_KEYWORDS)]
+    
+    is_red_flag = False
+    if len(fraud_posts) >= 2:
+        score -= 15
+        is_red_flag = True
+        notes.append(f"⚠️ {len(fraud_posts)} fraud-specific Reddit reports")
+    elif len(complaint_posts) > 5:
+        score -= 3
+        notes.append(f"Some service complaints on Reddit ({len(complaint_posts)})")
+    elif reddit.get("mentions", 0) > 0 and len(fraud_posts) == 0:
+        score += 4
+        notes.append(f"Reddit presence: {reddit.get('mentions')} mentions, no fraud signals")
+    else:
+        notes.append("No significant public review data found")
         
-    # 2. Reddit Sentiment (Weight: 3)
-    neg_reddit = len(reddit.get("negative_posts", []))
-    if reddit.get("mentions", 0) > 0:
-        if neg_reddit >= 3:
-            score -= 10 # Massive penalty
-            notes.append(f"Red flag: {neg_reddit} negative Reddit posts")
-        elif neg_reddit > 0:
-            score += 1
-            notes.append("Mixed Reddit sentiment")
-        else:
-            score += 3
-            notes.append("Clean Reddit footprint")
-            
-    # 3. Glassdoor (Weight: 3)
-    if gd.get("rating"):
-        score += 3 if gd["rating"] >= 3.5 else 1
-        notes.append(f"Glassdoor: {gd['rating']}/5")
-
-    # 4. No Data Penalty
-    if not notes:
-        return ScoreFactor("review_sentiment", 0, MAX, "No public reviews found — suspicious for established company", True)
-
-    is_red_flag = score < 0
     return ScoreFactor("review_sentiment", max(0, min(MAX, score)), MAX, " | ".join(notes), is_red_flag)
 
 
-def _score_client_claims(extracted: dict) -> ScoreFactor:
+def _score_client_claims(extracted: dict, raw_summary: dict = None, established: bool = False) -> ScoreFactor:
     MAX = 10
+    raw_summary = raw_summary or {}
     claimed_clients = extracted.get("claimed_clients", [])
     verified_clients = extracted.get("verified_clients", [])
 
     if not claimed_clients:
-        return ScoreFactor("client_verification", 5, MAX, "No specific client claims made", False)
+        return ScoreFactor("client_verification", 6, MAX, "No clients claimed — neutral score", False)
 
     if not verified_clients:
-        return ScoreFactor(
-            "client_verification", 0, MAX,
-            f"Claims {len(claimed_clients)} client(s) but none could be verified publicly",
-            is_red_flag=True,
-        )
+        return ScoreFactor("client_verification", 5, MAX, f"Claims {len(claimed_clients)} clients but unverified — neutral score", False)
 
-    ratio = len(verified_clients) / len(claimed_clients)
-    score = int(ratio * MAX)
-    return ScoreFactor(
-        "client_verification", score, MAX,
-        f"{len(verified_clients)}/{len(claimed_clients)} client claims verified",
-        False,
-    )
+    return ScoreFactor("client_verification", 9, MAX, f"{len(verified_clients)} client claims verified externally", False)
+
+def _score_digital_footprint(extracted: dict, raw_summary: dict) -> ScoreFactor:
+    MAX = 10
+    score = 0
+    notes = []
+    sources = set(raw_summary.get("scraped_sources", []))
+    pages_scraped = raw_summary.get("pages_scraped", 0) or 0
+
+    if pages_scraped >= 10:
+        score += 3
+        notes.append(f"{pages_scraped} website pages crawled")
+    elif pages_scraped >= 4:
+        score += 2
+        notes.append(f"{pages_scraped} website pages crawled")
+    elif pages_scraped > 0:
+        score += 1
+        notes.append("Only a shallow website footprint was crawlable")
+
+    if any("contact" in s or "location" in s or "office" in s for s in sources):
+        score += 2
+        notes.append("Contact/location page found")
+    if any("about" in s or "company" in s or "who_we_are" in s for s in sources):
+        score += 2
+        notes.append("About/company page found")
+    if extracted.get("linkedin_profile_exists") or extracted.get("has_linkedin"):
+        score += 2
+        notes.append("LinkedIn footprint present")
+    if raw_summary.get("news_article_count", 0) > 0 or raw_summary.get("reviews", {}).get("overall_sentiment") not in (None, "NO_DATA"):
+        score += 1
+        notes.append("External mentions/reviews found")
+
+    is_red_flag = score <= 2
+    reason = " | ".join(notes) if notes else "No crawlable website or external footprint found"
+    return ScoreFactor("digital_footprint", min(MAX, score), MAX, reason, is_red_flag)
 
 
 def _score_documents(extracted: dict) -> ScoreFactor:
@@ -387,11 +460,11 @@ def _calculate_contradiction_penalty(contradictions: list[dict]) -> int:
     """
     penalty = 0
     for c in contradictions:
-        status = c.get("status", "UNVERIFIED")
+        status = c.get("status", "MISMATCH")
         severity = c.get("severity", "LOW")
 
         if status == "MISMATCH":
-            penalty += 8 if severity == "HIGH" else 4
+            penalty += 8 if severity == "HIGH" else 2 if severity == "MEDIUM" else 1
         elif status == "UNVERIFIED":
             penalty += 1
 

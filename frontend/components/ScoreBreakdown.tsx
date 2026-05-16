@@ -23,6 +23,7 @@ const FACTOR_LABELS: Record<string, string> = {
   review_sentiment: "Review sentiment",
   client_verification: "Client claim verification",
   document_integrity: "Document integrity",
+  digital_footprint: "Digital footprint depth",
 };
 
 const RISK_COLORS = {

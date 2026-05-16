@@ -1,30 +1,11 @@
-"""
-ShadowTrace AI — Analyzer
-Uses a Small Language Model (SLM) to extract structured fields from scraped data
-and detect contradictions between claims and evidence.
-
-Supports: Phi-3 Mini (local Ollama), Mistral 7B, or any OpenAI-compatible endpoint.
-Falls back to rule-based extraction if no LLM available.
-"""
-
-import json
+import sys
 import re
-import httpx
-import logging
-import asyncio
-from typing import Optional
 
-logger = logging.getLogger(__name__)
+with open("backend/analyzer.py", "r", encoding="utf-8") as f:
+    content = f.read()
 
-# ── LLM config — change OLLAMA_MODEL to switch models ────────────────────────
-OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "phi3"           # or "mistral", "gemma2:2b"
-OLLAMA_TIMEOUT = 60
-
-LLM_AVAILABLE = True            # Set to False to force rule-based mode
-
-
-async def analyze_company(raw_data: dict) -> dict:
+# 1. We need to replace analyze_company
+analyze_company_new = '''async def analyze_company(raw_data: dict) -> dict:
     summary = raw_data.get("summary", {})
     whois_data = raw_data.get("whois", {})
     combined_text = summary.get("combined_text", "")
@@ -67,175 +48,17 @@ async def analyze_company(raw_data: dict) -> dict:
         "analysis_method": "llm" if LLM_AVAILABLE else "rule_based",
         "raw_data_summary": raw_data  # Pass through for scoring
     }
+'''
 
+content = re.sub(
+    r'async def analyze_company\(raw_data: dict\) -> dict:.*?return \{.*?\}',
+    analyze_company_new,
+    content,
+    flags=re.DOTALL
+)
 
-
-# ── LLM extraction (Ollama) ───────────────────────────────────────────────────
-
-EXTRACTION_PROMPT = """You are a business intelligence analyst. Extract the following information from the company text below.
-
-Return ONLY a valid JSON object with these exact keys. Use null if information is not found.
-
-{{
-  "company_name": "string or null",
-  "founding_year": "string or null (e.g. '2015')",
-  "employee_count_claimed": "string or null (e.g. '200+')",
-  "headquarters": "string or null",
-  "addresses": ["list of addresses mentioned"],
-  "directors": ["list of director/founder names"],
-  "claimed_clients": ["list of companies claimed as clients"],
-  "certifications": ["list of certifications mentioned"],
-  "funding": "string or null (e.g. 'Series A, $5M')",
-  "has_linkedin": false,
-  "has_twitter": false,
-  "tagline": "string or null"
-}}
-
-Company text:
-{text}
-
-Return only the JSON object, no other text."""
-
-
-async def llm_extract(text: str) -> dict:
-    """
-    Calls local Ollama endpoint to extract structured data.
-    Falls back to rule-based on failure.
-    """
-    prompt = EXTRACTION_PROMPT.format(text=text[:12000])  # Use more of the crawl without overwhelming small local models
-
-    try:
-        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
-            response = await client.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
-                json={
-                    "model": OLLAMA_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.1},  # Low temp for factual extraction
-                },
-            )
-            data = response.json()
-            raw_output = data.get("response", "")
-
-            # Strip markdown fences
-            raw_output = re.sub(r"```json|```", "", raw_output).strip()
-            
-            # Extract just the JSON object (everything between first { and last })
-            match = re.search(r'\{.*\}', raw_output, re.DOTALL)
-            if match:
-                raw_output = match.group()
-            
-            # Remove trailing commas before } or ] (invalid JSON)
-            raw_output = re.sub(r',\s*([}\]])', r'\1', raw_output)
-            
-            parsed = json.loads(raw_output)
-            return parsed
-
-    except (httpx.ConnectError, httpx.TimeoutException):
-        logger.warning("Ollama not running. Using rule-based extraction.")
-        return rule_based_extract(text, {})
-
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.warning(f"LLM returned bad JSON: {e}. Using rule-based extraction.")
-        return rule_based_extract(text, {})
-
-
-# ── Rule-based extraction (fallback) ─────────────────────────────────────────
-
-def rule_based_extract(text: str, raw_data: dict) -> dict:
-    """
-    Regex-based extraction when LLM is unavailable.
-    Covers the most common patterns in company websites.
-    """
-    return {
-        "company_name": None,
-        "founding_year": _re_founding_year(text),
-        "employee_count_claimed": _re_employee_count(text),
-        "headquarters": _re_headquarters(text),
-        "addresses": _re_addresses(text),
-        "directors": [],
-        "claimed_clients": _re_client_names(text),
-        "certifications": _re_certifications(text),
-        "funding": None,
-        "has_linkedin": "linkedin.com" in text.lower(),
-        "has_twitter": "twitter.com" in text.lower() or "x.com" in text.lower(),
-        "tagline": None,
-    }
-
-
-def _re_founding_year(text: str) -> Optional[str]:
-    patterns = [
-        r"(?:founded|established|incorporated|since|started)\s+(?:in\s+)?((19|20)\d{2})",
-        r"((19|20)\d{2})\s+(?:founded|established)",
-        r"©\s*((19|20)\d{2})",
-    ]
-    for p in patterns:
-        m = re.search(p, text, re.IGNORECASE)
-        if m:
-            return m.group(1)
-    return None
-
-
-def _re_employee_count(text: str) -> Optional[str]:
-    patterns = [
-        r"([\d,]+)\s*\+?\s*(?:employees|staff|team members|professionals)",
-        r"team of\s+([\d,]+)",
-        r"over\s+([\d,]+)\s+(?:employees|people)",
-    ]
-    for p in patterns:
-        m = re.search(p, text, re.IGNORECASE)
-        if m:
-            return m.group(1).replace(",", "")
-    return None
-
-
-def _re_headquarters(text: str) -> Optional[str]:
-    m = re.search(
-        r"(?:headquartered|located|based)\s+in\s+([A-Z][a-zA-Z\s,]+?)(?:\.|,|\n)",
-        text,
-        re.IGNORECASE,
-    )
-    return m.group(1).strip() if m else None
-
-
-def _re_addresses(text: str) -> list[str]:
-    # Look for PIN codes (Indian) or ZIP codes
-    addresses = re.findall(r"[A-Z][\w\s,.-]{10,60}(?:\d{6}|\d{5})", text)
-    return [a.strip() for a in addresses[:3]]
-
-
-def _re_client_names(text: str) -> list[str]:
-    """Look for Fortune 500 / well-known company names mentioned as clients."""
-    known_companies = [
-        "Infosys", "TCS", "Wipro", "HCL", "Accenture", "Deloitte",
-        "Google", "Microsoft", "Amazon", "Apple", "Meta", "IBM",
-        "HDFC", "ICICI", "Reliance", "Tata", "Mahindra", "Bajaj",
-    ]
-    found = [c for c in known_companies if c.lower() in text.lower()]
-    return found
-
-
-def _re_certifications(text: str) -> list[str]:
-    certs = ["ISO 9001", "ISO 27001", "ISO 14001", "SOC 2", "PCI DSS", "GDPR", "CMMI"]
-    return [c for c in certs if c.lower() in text.lower()]
-
-
-def _verify_claimed_clients(claimed_clients: list, news: list[dict]) -> list[str]:
-    verified = []
-    news_text = " ".join(
-        f"{article.get('title', '')} {article.get('url', '')}"
-        for article in news
-    ).lower()
-    for client in claimed_clients or []:
-        if client and str(client).lower() in news_text:
-            verified.append(str(client))
-    return verified
-
-
-# ── Contradiction detection ───────────────────────────────────────────────────
-
-async def ai_analyze_legitimacy(raw_data: dict, extracted: dict) -> dict:
+# 2. We need to replace detect_contradictions and legacy shim with the new AI analyzer code
+ai_analyzer_code = '''async def ai_analyze_legitimacy(raw_data: dict, extracted: dict) -> dict:
     """
     Sends ALL scraped content to Phi-3/rule-based engine.
     Asks it to reason about legitimacy like a human analyst would.
@@ -244,7 +67,7 @@ async def ai_analyze_legitimacy(raw_data: dict, extracted: dict) -> dict:
     evidence = []
     # Website content
     for page in raw_data.get("pages", []):
-        evidence.append(f"[WEBSITE - {page['source']}]\n{page['text'][:1000]}")
+        evidence.append(f"[WEBSITE - {page['source']}]\\n{page['text'][:1000]}")
     # WHOIS data
     whois = raw_data.get("whois", {})
     if whois:
@@ -257,7 +80,7 @@ Country: {whois.get('country')}""")
     # LinkedIn
     linkedin = raw_data.get("linkedin", {})
     if linkedin.get("raw_text"):
-        evidence.append(f"[LINKEDIN PAGE]\n{linkedin['raw_text'][:500]}")
+        evidence.append(f"[LINKEDIN PAGE]\\n{linkedin['raw_text'][:500]}")
     elif linkedin.get("profile_exists"):
         evidence.append("[LINKEDIN] Profile URL exists but content blocked by LinkedIn")
     # Reddit posts — send ACTUAL titles not just counts
@@ -266,14 +89,14 @@ Country: {whois.get('country')}""")
     if reddit.get("mentions", 0) > 0:
         all_posts = (reddit.get("positive_posts", []) + 
                      reddit.get("negative_posts", []))[:10]
-        reddit_text = "\n".join([f"- {p['title']} (r/{p['sub']}, score:{p['score']})" 
+        reddit_text = "\\n".join([f"- {p['title']} (r/{p['sub']}, score:{p['score']})" 
                                   for p in all_posts])
-        evidence.append(f"[REDDIT MENTIONS - {reddit['mentions']} total]\n{reddit_text}")
+        evidence.append(f"[REDDIT MENTIONS - {reddit['mentions']} total]\\n{reddit_text}")
     # Google News headlines — send actual titles
     news = raw_data.get("news", [])
     if news:
-        news_text = "\n".join([f"- {a['title']}" for a in news[:10]])
-        evidence.append(f"[NEWS COVERAGE]\n{news_text}")
+        news_text = "\\n".join([f"- {a['title']}" for a in news[:10]])
+        evidence.append(f"[NEWS COVERAGE]\\n{news_text}")
     # Extended sources
     ext = raw_data.get("extended_sources", {})
     ext_summary = []
@@ -284,7 +107,7 @@ Country: {whois.get('country')}""")
             else:
                 ext_summary.append(f"{source}: NOT FOUND")
     if ext_summary:
-        evidence.append(f"[EXTENDED SOURCE CHECK]\n" + "\n".join(ext_summary))
+        evidence.append(f"[EXTENDED SOURCE CHECK]\\n" + "\\n".join(ext_summary))
     # Review ratings
     tp = reviews.get("trustpilot", {})
     gd = reviews.get("glassdoor", {})
@@ -294,9 +117,9 @@ Country: {whois.get('country')}""")
     if gd.get("rating"): ratings_text.append(f"Glassdoor: {gd['rating']}/5")
     if amb.get("rating"): ratings_text.append(f"AmbitionBox: {amb['rating']}/5")
     if ratings_text:
-        evidence.append(f"[REVIEW RATINGS]\n" + "\n".join(ratings_text))
+        evidence.append(f"[REVIEW RATINGS]\\n" + "\\n".join(ratings_text))
     # Combine all evidence
-    full_evidence = "\n\n".join(evidence)
+    full_evidence = "\\n\\n".join(evidence)
     # Now ask AI to reason about it
     analysis_prompt = f"""You are a professional business due diligence analyst.
 Analyze the following evidence about a company and answer these questions:
@@ -354,9 +177,9 @@ No markdown, no explanation outside the JSON."""
                 )
                 raw = res.json().get("response", "")
                 # Clean JSON
-                match = re.search(r'\{.*\}', raw, re.DOTALL)
+                match = re.search(r'\\{.*\\}', raw, re.DOTALL)
                 if match:
-                    clean = re.sub(r',\s*([}\]])', r'\1', match.group())
+                    clean = re.sub(r',\\s*([}\\]])', r'\\1', match.group())
                     result = json.loads(clean)
                     return result
         except Exception as e:
@@ -518,41 +341,14 @@ def rule_based_legitimacy_analysis(raw_data: dict, extracted: dict) -> dict:
                      f"{reddit.get('mentions', 0)} Reddit mentions, "
                      f"{len(news)} news articles analyzed."
     }
+'''
 
+content = re.sub(
+    r'def detect_contradictions\(extracted: dict, raw_data: dict\) -> list\[dict\]:.*?(?=def _extract_company_name_from_pages)',
+    lambda match: ai_analyzer_code + "\n\n",
+    content,
+    flags=re.DOTALL
+)
 
-def _extract_company_name_from_pages(pages: list[dict]) -> Optional[str]:
-    for page in pages:
-        title = page.get("title", "")
-        if title:
-            # Remove common suffixes
-            name = re.sub(
-                r"\s*[-|–]\s*.+$|\s*(Pvt\.?\s*Ltd\.?|Inc\.?|LLC|Corp\.?|Limited).*",
-                "",
-                title,
-                flags=re.IGNORECASE,
-            ).strip()
-            if 2 < len(name) < 60:
-                return name
-    return None
-
-# ── Legacy Compatibility Layer ────────────────────────────────────────────────
-class TrustScoreGenerator:
-    def __init__(self):
-        pass
-
-    def generate_score(self, scraped_data: dict, extracted_data: dict) -> dict:
-        # This is now handled by trust_score.py, but we provide a shim here
-        # for any code still calling this method directly.
-        from trust_score import calculate_trust_score
-        dossier = {
-            "trust_score": 0,
-            "risk_level": "UNKNOWN",
-            "contradictions": detect_contradictions(extracted_data, scraped_data),
-            "extracted": extracted_data
-        }
-        score_result = calculate_trust_score(dossier)
-        return {
-            "trust_score": score_result["score"],
-            "risk_level": score_result["risk_level"],
-            "contradictions": dossier["contradictions"]
-        }
+with open("backend/analyzer.py", "w", encoding="utf-8") as f:
+    f.write(content)

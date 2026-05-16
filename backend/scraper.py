@@ -7,8 +7,9 @@ import asyncio
 import re
 import logging
 from datetime import datetime
+from collections import deque
 from typing import Optional
-from urllib.parse import urlparse, quote
+from urllib.parse import urljoin, urldefrag, urlparse, quote
 
 import httpx
 import whois
@@ -22,6 +23,14 @@ HEADERS = {
 REDDIT_HEADERS = {
     "User-Agent": "ShadowTraceBot/1.0 (hackathon project; contact@shadowtrace.ai)"
 }
+MAX_WEBSITE_PAGES = 100
+MAX_CRAWL_DEPTH = 5
+MAX_PAGE_TEXT_CHARS = 12000
+PRIORITY_PATH_KEYWORDS = [
+    "about", "company", "who-we-are", "leadership", "team", "contact",
+    "location", "office", "career", "clients", "customers", "case-stud",
+    "partner", "services", "solutions", "industries", "privacy", "terms",
+]
 
 
 async def discover_company_links(url: str) -> dict:
@@ -89,6 +98,7 @@ async def scrape_reviews(company_name: str, raw_data: dict):
                 posts = data.get("data", {}).get("children", [])
                 reviews["reddit"]["mentions"] = len(posts)
                 neg_kw = ["scam", "fraud", "fake", "avoid", "warning", "worst", "bad", "cheat", "liar", "exposed"]
+                pos_kw = ["great", "awesome", "good", "best", "love", "recommend", "amazing", "excellent", "legit"]
                 for post in posts:
                     p = post.get("data", {})
                     title = p.get("title", "").lower()
@@ -99,7 +109,7 @@ async def scrape_reviews(company_name: str, raw_data: dict):
                     }
                     if any(kw in title for kw in neg_kw):
                         reviews["reddit"]["negative_posts"].append(post_info)
-                    else:
+                    elif any(kw in title for kw in pos_kw):
                         reviews["reddit"]["positive_posts"].append(post_info)
             else:
                 logger.warning(f"Reddit returned {res.status_code}")
@@ -111,7 +121,7 @@ async def scrape_reviews(company_name: str, raw_data: dict):
             gd_query = quote(f"{company_name} glassdoor rating reviews")
             gd_rss = f"https://news.google.com/rss/search?q={gd_query}&hl=en-IN&gl=IN&ceid=IN:en"
             res = await client.get(gd_rss)
-            soup = BeautifulSoup(res.text, "xml")
+            soup = BeautifulSoup(res.text, "html.parser")
             for item in soup.find_all("item")[:5]:
                 title = item.find("title")
                 desc = item.find("description")
@@ -151,10 +161,9 @@ async def scrape_reviews(company_name: str, raw_data: dict):
                 tp_query = quote(f"{company_name} trustpilot rating")
                 tp_rss = f"https://news.google.com/rss/search?q={tp_query}"
                 res = await client.get(tp_rss)
-                soup = BeautifulSoup(res.text, "xml")
+                soup = BeautifulSoup(res.text, "html.parser")
                 for item in soup.find_all("item")[:5]:
-                    text = (item.find("title").text if item.find("title") else "") + \
-                           (item.find("description").text if item.find("description") else "")
+                    text = (item.find("title").text if item.find("title") else "") +                            (item.find("description").text if item.find("description") else "")
                     match = re.search(r'(\d\.\d)\s*(?:out of 5|/5|stars)', text, re.IGNORECASE)
                     if match and "trustpilot" in text.lower():
                         reviews["trustpilot"]["rating"] = float(match.group(1))
@@ -168,7 +177,7 @@ async def scrape_reviews(company_name: str, raw_data: dict):
             news_query = quote(f"{company_name} reviews complaints")
             rss_url = f"https://news.google.com/rss/search?q={news_query}&hl=en-IN&gl=IN&ceid=IN:en"
             res = await client.get(rss_url)
-            soup = BeautifulSoup(res.text, "xml")
+            soup = BeautifulSoup(res.text, "html.parser")
             items = soup.find_all("item")
             reviews["google_news_sentiment"]["total"] = len(items)
             neg_kw = ["scam", "fraud", "fake", "lawsuit", "complaint", "arrested", "cheated"]
@@ -243,6 +252,7 @@ async def scrape_company(url: str, linkedin_url: str = None, gst_number: str = N
         scrape_whois(url, raw_data),
         scrape_google_news(url, company_name, raw_data),
         scrape_reviews(company_name, raw_data),
+        scrape_wikipedia(company_name, raw_data),
     ]
     if final_linkedin:
         tasks.append(scrape_linkedin(final_linkedin, raw_data))
@@ -262,31 +272,53 @@ async def scrape_company(url: str, linkedin_url: str = None, gst_number: str = N
 async def scrape_website(url: str, raw_data: dict):
     try:
         async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=15) as client:
-            res = await client.get(url)
-            soup = BeautifulSoup(res.text, "html.parser")
-            text = extract_clean_text(soup)
-            raw_data["pages"].append({
-                "url": url,
-                "source": "website",
-                "text": text,
-                "title": soup.title.string.strip() if soup.title else "",
-                "links": [a["href"] for a in soup.find_all("a", href=True)][:50],
-                "meta": {t.get("name", t.get("property", "")): t.get("content", "")
-                         for t in soup.find_all("meta") if t.get("content")}
-            })
+            start_url = _normalize_url(url)
+            base_host = _registered_host(urlparse(start_url).netloc)
+            queue = deque([(start_url, 0)])
+            seen = set()
 
-            # Try About page
-            about_url = _find_about_url(soup, url)
-            if about_url:
+            while queue and len(raw_data["pages"]) < MAX_WEBSITE_PAGES:
+                current_url, depth = queue.popleft()
+                if current_url in seen:
+                    continue
+                seen.add(current_url)
+
                 try:
-                    res2 = await client.get(about_url)
-                    soup2 = BeautifulSoup(res2.text, "html.parser")
-                    raw_data["pages"].append({
-                        "url": about_url, "source": "about_page",
-                        "text": extract_clean_text(soup2), "title": "About"
-                    })
-                except Exception:
-                    pass
+                    res = await client.get(current_url)
+                    content_type = res.headers.get("content-type", "")
+                    if res.status_code >= 400 or "text/html" not in content_type:
+                        continue
+                except Exception as page_error:
+                    logger.debug(f"Skipping {current_url}: {page_error}")
+                    continue
+
+                soup = BeautifulSoup(res.text, "html.parser")
+                links = _extract_internal_links(soup, current_url, base_host)
+                source = "website" if current_url == start_url else _classify_page_source(current_url)
+
+                raw_data["pages"].append({
+                    "url": current_url,
+                    "source": source,
+                    "text": extract_clean_text(soup),
+                    "title": soup.title.string.strip() if soup.title and soup.title.string else "",
+                    "links": links[:80],
+                    "meta": {t.get("name", t.get("property", "")): t.get("content", "")
+                             for t in soup.find_all("meta") if t.get("content")}
+                })
+
+                if depth >= MAX_CRAWL_DEPTH:
+                    continue
+
+                for link in _rank_links(links):
+                    if link not in seen and len(seen) + len(queue) < MAX_WEBSITE_PAGES * 3:
+                        queue.append((link, depth + 1))
+
+            raw_data["crawl_stats"] = {
+                "pages_scraped": len(raw_data["pages"]),
+                "max_pages": MAX_WEBSITE_PAGES,
+                "max_depth": MAX_CRAWL_DEPTH,
+                "same_domain_only": True,
+            }
     except Exception as e:
         logger.error(f"Website scrape error: {e}")
         raw_data["errors"].append({"source": "website", "error": str(e)})
@@ -303,10 +335,61 @@ def _find_about_url(soup, base_url):
     return None
 
 
+def _normalize_url(url: str) -> str:
+    if not url.startswith("http"):
+        url = "https://" + url
+    clean, _ = urldefrag(url)
+    return clean.rstrip("/")
+
+
+def _registered_host(hostname: str) -> str:
+    host = hostname.lower().replace("www.", "")
+    parts = host.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
+def _extract_internal_links(soup: BeautifulSoup, current_url: str, base_host: str) -> list[str]:
+    links = []
+    blocked_ext = (
+        ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".zip",
+        ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".mp4", ".mov",
+    )
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("mailto:", "tel:", "javascript:")):
+            continue
+        absolute = _normalize_url(urljoin(current_url, href))
+        parsed = urlparse(absolute)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        if _registered_host(parsed.netloc) != base_host:
+            continue
+        if parsed.path.lower().endswith(blocked_ext):
+            continue
+        links.append(absolute)
+    return list(dict.fromkeys(links))
+
+
+def _rank_links(links: list[str]) -> list[str]:
+    def score(link: str) -> tuple[int, int, str]:
+        path = urlparse(link).path.lower()
+        priority = 0 if any(kw in path for kw in PRIORITY_PATH_KEYWORDS) else 1
+        return (priority, path.count("/"), link)
+    return sorted(links, key=score)
+
+
+def _classify_page_source(url: str) -> str:
+    path = urlparse(url).path.lower()
+    for key in PRIORITY_PATH_KEYWORDS:
+        if key in path:
+            return f"{key.replace('-', '_')}_page"
+    return "site_page"
+
+
 def extract_clean_text(soup: BeautifulSoup) -> str:
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
-    return re.sub(r"\s+", " ", soup.get_text(separator=" ", strip=True))[:8000]
+    return re.sub(r"\s+", " ", soup.get_text(separator=" ", strip=True))[:MAX_PAGE_TEXT_CHARS]
 
 
 async def scrape_whois(url: str, raw_data: dict):
@@ -338,6 +421,52 @@ async def scrape_whois(url: str, raw_data: dict):
     except Exception as e:
         logger.warning(f"WHOIS failed: {e}")
         raw_data["whois"] = {"domain_age_days": 365, "error": str(e)}
+
+
+async def scrape_wikipedia(company_name: str, raw_data: dict):
+    """Check Wikipedia for company presence, a strong indicator of an established global entity."""
+    raw_data["wikipedia"] = {"found": False, "url": None, "summary": None}
+    if not company_name or company_name.lower() == "unknown":
+        return
+
+    try:
+        # Wikipedia API search
+        search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={quote(company_name)}&utf8=&format=json"
+        async with httpx.AsyncClient(headers=HEADERS, timeout=10) as client:
+            res = await client.get(search_url)
+            if res.status_code == 200:
+                data = res.json()
+                search_results = data.get("query", {}).get("search", [])
+                
+                # Check if the first result is a good match
+                if search_results:
+                    first_result = search_results[0]
+                    title = first_result.get("title", "")
+                    
+                    # Ensure it's not a completely unrelated page by doing a loose match
+                    # E.g. search "Relanto" might return something else if it doesn't exist
+                    company_words = set(re.findall(r'\w+', company_name.lower()))
+                    title_words = set(re.findall(r'\w+', title.lower()))
+                    
+                    # If at least one significant word matches
+                    if company_words.intersection(title_words):
+                        # Fetch the page summary
+                        page_id = first_result.get("pageid")
+                        summary_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&pageids={page_id}&format=json"
+                        res_sum = await client.get(summary_url)
+                        if res_sum.status_code == 200:
+                            sum_data = res_sum.json()
+                            pages = sum_data.get("query", {}).get("pages", {})
+                            if str(page_id) in pages:
+                                extract = pages[str(page_id)].get("extract", "")
+                                if len(extract) > 50: # Valid summary
+                                    raw_data["wikipedia"] = {
+                                        "found": True,
+                                        "url": f"https://en.wikipedia.org/?curid={page_id}",
+                                        "summary": extract[:1000]
+                                    }
+    except Exception as e:
+        logger.warning(f"Wikipedia scrape failed: {e}")
 
 
 async def scrape_linkedin(linkedin_url: str, raw_data: dict):
@@ -378,7 +507,7 @@ async def scrape_google_news(url: str, company_name: str, raw_data: dict):
         rss_url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
         async with httpx.AsyncClient(headers=HEADERS, timeout=10) as client:
             res = await client.get(rss_url)
-            soup = BeautifulSoup(res.text, "xml")
+            soup = BeautifulSoup(res.text, "html.parser")
             articles = []
             neg_kw = ["fraud", "scam", "fake", "cheated", "lawsuit", "fir", "arrested"]
             for item in soup.find_all("item")[:10]:
@@ -410,13 +539,15 @@ def build_summary(raw_data: dict) -> dict:
         combined += f"\n\n[LinkedIn]\n{raw_data['linkedin']['raw_text']}"
 
     return {
-        "combined_text": combined[:10000],
+        "combined_text": combined[:30000],
         "whois_creation_year": raw_data.get("whois", {}).get("creation_year"),
         "domain_age_days": raw_data.get("whois", {}).get("domain_age_days"),
         "news_article_count": raw_data.get("news_count", 0),
         "fraud_news_count": raw_data.get("fraud_news_count", 0),
         "linkedin_employees": raw_data.get("linkedin", {}).get("employee_count"),
         "scraped_sources": [p["source"] for p in raw_data.get("pages", [])],
+        "pages_scraped": len(raw_data.get("pages", [])),
+        "crawl_stats": raw_data.get("crawl_stats", {}),
         "reviews": raw_data.get("reviews", {}),
     }
 

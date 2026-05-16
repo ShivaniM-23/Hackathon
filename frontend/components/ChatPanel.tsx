@@ -71,12 +71,13 @@ export default function ChatPanel({ jobId, companyName, trustScore, riskLevel }:
           disclaimer: data.disclaimer,
         },
       ]);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
       setMessages((m) => [
         ...m,
         {
           role: "ai",
-          text: `Connection error: ${err.message}. Check that the backend is running on port 8000.`,
+          text: `Connection error: ${message}. Check that the backend is running on port 8000.`,
           confidence: 0,
         },
       ]);

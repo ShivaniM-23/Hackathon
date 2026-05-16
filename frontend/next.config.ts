@@ -9,7 +9,6 @@ const nextConfig: NextConfig = {
       },
     ]
   },
-  // @ts-ignore
   allowedDevOrigins: ['localhost:8000', 'localhost:3000']
 };
 

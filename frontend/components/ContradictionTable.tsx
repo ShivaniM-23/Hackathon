@@ -12,12 +12,14 @@ interface Contradiction {
 
 interface ContradictionTableProps {
   contradictions: Contradiction[];
+  redFlags?: string[];
 }
 
-const ContradictionTable: React.FC<ContradictionTableProps> = ({ contradictions }) => {
+const ContradictionTable: React.FC<ContradictionTableProps> = ({ contradictions, redFlags = [] }) => {
   const safeContradictions = contradictions ?? [];
+  const safeRedFlags = redFlags ?? [];
 
-  if (safeContradictions.length === 0) {
+  if (safeContradictions.length === 0 && safeRedFlags.length === 0) {
     return (
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-12 text-center">
         <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -25,6 +27,20 @@ const ContradictionTable: React.FC<ContradictionTableProps> = ({ contradictions 
         </div>
         <h3 className="text-lg font-semibold text-neutral-200">Digital Footprint Verified</h3>
         <p className="text-sm text-neutral-500 mt-2">No major contradictions or red flags detected in the digital traces.</p>
+      </div>
+    );
+  }
+
+  if (safeContradictions.length === 0) {
+    return (
+      <div className="bg-neutral-900 border border-yellow-500/20 rounded-2xl p-12 text-center">
+        <div className="w-16 h-16 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+          <AlertTriangle className="text-yellow-400" size={32} />
+        </div>
+        <h3 className="text-lg font-semibold text-neutral-200">Digital Footprint Needs Review</h3>
+        <p className="text-sm text-neutral-500 mt-2">
+          No direct contradictions were found, but scoring red flags were detected in the broader footprint.
+        </p>
       </div>
     );
   }

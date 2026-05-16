@@ -1,18 +1,54 @@
 "use client";
 
 import React from "react";
-import { MessageCircle, Star, TrendingDown, TrendingUp, AlertTriangle, ShieldCheck, Search } from "lucide-react";
+import { MessageCircle, Star, TrendingDown, TrendingUp, AlertTriangle, ShieldCheck } from "lucide-react";
 
 interface ReviewsPanelProps {
-  report: any;
+  report: {
+    raw_data_summary?: {
+      reviews?: unknown;
+      discovered_links?: Record<string, string | null>;
+    };
+    reviews?: unknown;
+    discovered_links?: Record<string, string | null>;
+  };
+}
+
+interface RedditPost {
+  title: string;
+}
+
+interface Reviews {
+  overall_sentiment?: string;
+  reddit?: {
+    mentions?: number;
+    negative_posts?: RedditPost[];
+    positive_posts?: RedditPost[];
+  };
+  trustpilot?: {
+    rating?: number | null;
+    found?: boolean;
+  };
+  glassdoor?: {
+    rating?: number | null;
+  };
+  google_news_sentiment?: {
+    total?: number;
+    negative?: number;
+    positive?: number;
+  };
 }
 
 const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
-  const reviews = report?.raw_data_summary?.reviews || {};
-  const discovered = report?.raw_data_summary?.discovered_links || {};
+  const reviews = (report?.raw_data_summary?.reviews || report?.reviews || {}) as Reviews;
+  const discovered = report?.raw_data_summary?.discovered_links || report?.discovered_links || {};
   
   const sentiment = reviews.overall_sentiment || "NO_DATA";
-  const reddit = reviews.reddit || { mentions: 0, negative_posts: [], positive_posts: [] };
+  const reddit = {
+    mentions: reviews.reddit?.mentions ?? 0,
+    negative_posts: reviews.reddit?.negative_posts ?? [],
+    positive_posts: reviews.reddit?.positive_posts ?? [],
+  };
   const tp = reviews.trustpilot || { rating: null, found: false };
   const gd = reviews.glassdoor || { rating: null };
   const news = reviews.google_news_sentiment || { total: 0, negative: 0, positive: 0 };
@@ -55,7 +91,7 @@ const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
           </div>
           {reddit.negative_posts.length > 0 ? (
             <div className="space-y-2">
-              {reddit.negative_posts.slice(0, 2).map((p: any, i: number) => (
+              {reddit.negative_posts.slice(0, 2).map((p: RedditPost, i: number) => (
                 <div key={i} className="flex gap-2 items-start bg-red-500/5 p-2 rounded border border-red-500/10">
                   <TrendingDown size={14} className="text-red-400 mt-0.5 flex-shrink-0" />
                   <p className="text-[11px] text-red-200 line-clamp-2 leading-tight">{p.title}</p>

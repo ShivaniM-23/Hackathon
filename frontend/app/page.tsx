@@ -29,9 +29,27 @@ interface Report {
   risk_level: string;
   contradictions: Contradiction[];
   red_flags: string[];
-  entities?: any[];
-  graph?: any;
-  score_breakdown: Record<string, any>;
+  legitimacy_signals?: string[];
+  legitimacy_verdict?: string;
+  ai_reasoning?: string;
+  entities?: unknown[];
+  relationships?: unknown[];
+  graph?: unknown;
+  score_breakdown: Record<string, {
+    score: number;
+    max: number;
+    reason: string;
+    is_red_flag: boolean;
+  }>;
+  discovered_links?: Record<string, string | null>;
+  raw_data_summary?: {
+    scraped_sources?: string[];
+    pages_scraped?: number;
+    reviews?: unknown;
+    discovered_links?: Record<string, string | null>;
+  };
+  reviews?: unknown;
+  progress_steps?: string[];
   progress?: number;
   steps?: {step: string, detail: string, pct: number}[];
 }
@@ -76,8 +94,6 @@ export default function Home() {
   useEffect(() => {
     if (!jobId) return;
 
-    let pollInterval: NodeJS.Timeout;
-
     const poll = async () => {
       try {
         const res = await fetch(`http://localhost:8000/api/report/${jobId}`);
@@ -97,8 +113,8 @@ export default function Home() {
       }
     };
 
+    const pollInterval: NodeJS.Timeout = setInterval(poll, 2000);
     poll(); // Initial call
-    pollInterval = setInterval(poll, 2000);
 
     return () => clearInterval(pollInterval);
   }, [jobId]);
@@ -154,6 +170,15 @@ export default function Home() {
     }
   };
 
+
+  const verdictColors: Record<string, string> = {
+    LEGITIMATE: "bg-green-500/20 text-green-400 border-green-500/30",
+    LIKELY_LEGITIMATE: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    UNCERTAIN: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    LIKELY_FRAUDULENT: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+    FRAUDULENT: "bg-red-500/20 text-red-400 border-red-500/30",
+  };
+
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans">
       <div className="max-w-7xl mx-auto px-6 py-12">
@@ -169,7 +194,7 @@ export default function Home() {
 
         <div className="grid lg:grid-cols-12 gap-8">
           
-          {/* Sidebar */}
+                    {/* Sidebar */}
           <aside className="lg:col-span-4 space-y-6">
             <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
               <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
@@ -185,6 +210,15 @@ export default function Home() {
                   />
                 </div>
                 
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-neutral-500 uppercase ml-1">LinkedIn URL (Optional)</label>
+                  <input 
+                    type="url" placeholder="https://linkedin.com/company/..."
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-blue-500 text-sm"
+                    value={linkedin} onChange={(e) => setLinkedin(e.target.value)}
+                  />
+                </div>
+
                 <button 
                   type="submit" disabled={loading}
                   className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold transition-all disabled:opacity-50 shadow-lg shadow-blue-500/10"
@@ -202,7 +236,7 @@ export default function Home() {
                   <div className="space-y-2">
                     {Object.entries(report.discovered_links).map(([key, val]) => {
                       if (!val || key === 'website') return null
-                      const icons: Record<string, string> = {
+                      const icons: Record<string, string | null> = {
                         linkedin: '💼', twitter: '🐦', github: '💻',
                         crunchbase: '📊', company_name: null
                       }
@@ -233,7 +267,7 @@ export default function Home() {
                 <div className="mt-4 pt-4 border-t border-neutral-800">
                   <h3 className="text-[10px] font-bold text-neutral-500 uppercase mb-2">Sources Scraped</h3>
                   <div className="flex flex-wrap gap-1">
-                    {(report.raw_data_summary.scraped_sources as string[]).map((src: string) => (
+                    {Array.from(new Set(report.raw_data_summary.scraped_sources as string[])).map((src: string) => (
                       <span key={src} className="text-[10px] px-2 py-0.5 bg-green-500/10 text-green-400 border border-green-500/20 rounded-full">
                         ✓ {src}
                       </span>
@@ -282,6 +316,16 @@ export default function Home() {
               {report?.status === "complete" && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                   
+                                    {/* Verdict Badge */}
+                  {report.legitimacy_verdict && (
+                    <div className="flex items-center gap-3 mb-4">
+                      <span className="text-sm text-neutral-400 font-semibold uppercase">AI Verdict:</span>
+                      <span className={`px-4 py-1.5 rounded-full text-xs font-bold border ${verdictColors[report.legitimacy_verdict] || verdictColors.UNCERTAIN}`}>
+                        {report.legitimacy_verdict.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Score Breakdown Section */}
                   <ScoreBreakdown
                     score={report.trust_score}
@@ -305,8 +349,24 @@ export default function Home() {
                     </div>
                   )}
 
+                                    {/* Legitimacy Signals */}
+                  {(report.legitimacy_signals ?? []).length > 0 && (
+                    <div className="bg-green-500/5 border border-green-500/20 rounded-2xl p-6">
+                      <h3 className="text-green-400 text-xs font-bold uppercase mb-4 flex items-center gap-2">
+                        <CheckCircle size={14} /> Legitimacy Signals
+                      </h3>
+                      <div className="space-y-2">
+                        {(report.legitimacy_signals ?? []).map((s, i) => (
+                          <div key={i} className="text-sm text-green-200/70 flex gap-2">
+                            <span className="text-green-500">✓</span> {s}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* ContradictionTable Component */}
-                  <ContradictionTable contradictions={report.contradictions} />
+                  <ContradictionTable contradictions={report.contradictions} redFlags={report.red_flags} />
 
                   {/* Reviews & Sentiment Panel */}
                   <ReviewsPanel report={report} />
@@ -321,8 +381,6 @@ export default function Home() {
                       <div className="flex-1 bg-neutral-950 rounded-xl border border-neutral-800 overflow-hidden relative">
                         <GraphView 
                           report={report}
-                          entities={report.entities}
-                          relationships={report.relationships}
                         />
                       </div>
                     </div>

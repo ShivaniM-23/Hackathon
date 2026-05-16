@@ -8,6 +8,30 @@ import '@xyflow/react/dist/style.css'
  * Uses only default node types to prevent "Node type not found" crashes.
  */
 
+interface GraphEntity {
+  id?: string | number;
+  type?: string;
+  risk?: string;
+  name?: string;
+  label?: string;
+}
+
+interface GraphRelationship {
+  source: string | number;
+  target: string | number;
+  type?: string;
+  label?: string;
+}
+
+interface GraphReport {
+  entities?: GraphEntity[];
+  relationships?: GraphRelationship[];
+  graph?: {
+    nodes?: GraphEntity[];
+    edges?: GraphRelationship[];
+  };
+}
+
 function getNodeStyle(type: string, risk: string) {
   const bg: Record<string, string> = {
     company: '#3b82f6',  // Blue
@@ -32,12 +56,13 @@ function getNodeStyle(type: string, risk: string) {
   }
 }
 
-export default function GraphView({ report }: { report: any }) {
+export default function GraphView({ report }: { report: unknown }) {
+  const graphReport = (report || {}) as GraphReport;
   // Ensure we extract from all possible report shapes (entities or graph.nodes)
-  const entities = report?.entities ?? report?.graph?.nodes ?? []
-  const relationships = report?.relationships ?? report?.graph?.edges ?? []
+  const entities = graphReport.entities ?? graphReport.graph?.nodes ?? []
+  const relationships = graphReport.relationships ?? graphReport.graph?.edges ?? []
 
-  const nodes = entities.map((e: any, i: number) => ({
+  const nodes = entities.map((e: GraphEntity, i: number) => ({
     id: String(e.id ?? i),
     type: 'default',   // ALWAYS use default type
     position: { x: (i % 4) * 220, y: Math.floor(i / 4) * 160 },
@@ -45,7 +70,7 @@ export default function GraphView({ report }: { report: any }) {
     style: getNodeStyle(e.type ?? 'company', e.risk ?? 'LOW')
   }))
 
-  const edges = relationships.map((r: any, i: number) => ({
+  const edges = relationships.map((r: GraphRelationship, i: number) => ({
     id: `e${i}`,
     source: String(r.source),
     target: String(r.target),
