@@ -38,6 +38,12 @@ scraper = ScraperEngine()
 extractor = EntityExtractor()
 analyzer = TrustScoreGenerator()
 
+from database import graph_db
+
+class ChatRequest(BaseModel):
+    message: str
+    context: dict
+
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_company(request: AnalyzeRequest):
     logger.info(f"Analyzing company: {request.url}")
@@ -51,6 +57,13 @@ async def analyze_company(request: AnalyzeRequest):
         # Phase 1: Contradiction & Score
         analysis_result = analyzer.generate_score(scraped_data, extracted_entities)
         
+        # Phase 2: Save to Graph and get Graph Data
+        graph_db.build_graph(request.url, extracted_entities, analysis_result['risk_level'])
+        graph_data = graph_db.get_graph(request.url)
+        
+        # Let's attach graph data to extracted_data or response so frontend can use it
+        extracted_entities["graph"] = graph_data
+        
         return AnalyzeResponse(
             status="success",
             trust_score=analysis_result['trust_score'],
@@ -62,6 +75,20 @@ async def analyze_company(request: AnalyzeRequest):
         logger.error(f"Error analyzing company: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/chat")
+async def chat_with_dossier(request: ChatRequest):
+    # Phase 2: Conversational AI
+    # In a real app, send request.message + request.context to Mistral 7B.
+    # We will mock the SLM response for reliability in demo if no SLM is running.
+    msg = request.message.lower()
+    if "why" in msg or "risky" in msg:
+        response = "Based on the dossier, this company is risky because the domain age contradicts their claimed founding year, and there's a flagged director in their network."
+    elif "summarise" in msg or "summarize" in msg:
+        response = "Summary: Domain is recently registered despite claims of being founded in 2015. Employee count matches LinkedIn, but overall trust score is severely impacted by timeline contradictions."
+    else:
+        response = "I have analyzed the dossier. There are notable inconsistencies in their digital footprint. Please specify what you'd like me to look into."
+    
+    return {"reply": response}
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}

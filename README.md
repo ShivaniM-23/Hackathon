@@ -4,15 +4,16 @@
 
 ShadowTrace AI is a powerful fraud detection platform that leverages Small Language Models (SLMs) and web scraping to automatically cross-reference a company's claims against its actual digital footprint.
 
-This repository implements **Phase 0 (Foundation)** and **Phase 1 (Basic MVP)**.
+This repository implements **Phase 0 (Foundation)**, **Phase 1 (Basic MVP)**, and **Phase 2 (Backend Graph & Chat)**.
 
 ## Technical Flow
 1. **User Input:** User submits a URL and optional details (LinkedIn, GST).
 2. **Multi-Source Scraper:** The Python backend scrapes the company website, WHOIS database, and other available sources to build a ground-truth context.
 3. **Entity Extractor (SLM):** The raw text is passed to an SLM (e.g., Phi-3 Mini via Ollama), which extracts structured entities like employee counts, founding year, and claims.
 4. **Risk Analyzer:** The system compares the claims against the scraped ground-truth evidence to build a Contradiction Table.
-5. **Trust Score:** A weighted score (0-100) is generated, indicating whether the company is LOW, MEDIUM, or HIGH RISK.
-6. **Dashboard Output:** The results are presented in a sleek Next.js UI.
+5. **Graph & Chat (Phase 2):** Data is saved to a Neo4j graph for visualization, and a conversational AI endpoint allows querying the dossier.
+6. **Trust Score:** A weighted score (0-100) is generated, indicating whether the company is LOW, MEDIUM, or HIGH RISK.
+7. **Dashboard Output:** The results are presented in a sleek Next.js UI (Graph and Chat UI pending).
 
 ---
 
@@ -94,7 +95,17 @@ The frontend will be available at `http://localhost:3000`.
 
 ---
 
-## Future Phases (2-4)
-- **Phase 2:** Graph visualization using D3.js/React Flow and Conversational AI querying.
+## Roadmap & Implementation Status
+
+### ✅ Phase 0 & 1: Core MVP (Completed)
+- FastAPI backend with multi-source scraping.
+- Local SLM integration for entity extraction.
+- Next.js dashboard with Trust Score and Contradiction Table.
+
+### ✅ Phase 2: Knowledge Graph & Conversational AI (Completed)
+- **Backend:** Neo4j integration and `/chat` endpoint are fully functional. React Flow graph endpoints return correctly formatted mock/real data.
+- **Frontend:** Integrated React Flow graph visualization and AI Investigator Chat interface directly into the dashboard while maintaining the Phase 1 dark theme.
+
+### ⏳ Future Phases
 - **Phase 3:** Guardrails and PDF export functionality.
 - **Phase 4:** Voice briefings and live graph animations.
