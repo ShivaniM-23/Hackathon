@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-shadowtrace}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Marri@1234
+      POSTGRES_DB: shadowtrace
     ports:
       - "5432:5432"
     volumes:
@@ -16,10 +14,10 @@ services:
   neo4j:
     image: neo4j:5
     environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
+      NEO4J_AUTH: neo4j/Marri@1234
     ports:
-      - "7474:7474" # HTTP
-      - "7687:7687" # Bolt
+      - "7474:7474"
+      - "7687:7687"
     volumes:
       - neo4j_data:/data
     restart: unless-stopped
