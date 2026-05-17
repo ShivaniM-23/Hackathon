@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useUser } from "./hooks/useUser";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Search, ShieldAlert, CheckCircle, AlertTriangle, 
@@ -78,6 +80,8 @@ const LoadingSkeleton = ({ steps }: { steps?: {step: string, detail: string, pct
 );
 
 export default function Home() {
+  const { user, loading: authLoading, signOut } = useUser();
+  const router = useRouter();
   const [url, setUrl] = useState("");
   const [linkedin, setLinkedin] = useState("");
   const [gst, setGst] = useState("");
@@ -90,18 +94,40 @@ export default function Home() {
   const [chatHistory, setChatHistory] = useState<{role: string, content: string}[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
 
-  // --- Polling Logic (Fix for Bug 2) ---
+  // --- Polling Logic (Fix for Bug 2 & Persistence Support) ---
+  const failCount = useRef(0);
+
+  useEffect(() => {
+    if (!user && !authLoading) router.push("/login");
+  }, [user, authLoading, router]);
+
   useEffect(() => {
     if (!jobId) return;
 
     const poll = async () => {
       try {
         const res = await fetch(`http://localhost:8000/api/report/${jobId}`);
-        if (!res.ok) return;
+        
+        if (!res.ok) {
+          if (res.status === 404) {
+            failCount.current += 1;
+            if (failCount.current >= 3) {
+              // Server state lost or job expired
+              setLoading(false);
+              setJobId(null);
+              alert("Investigation session lost (likely due to server restart). Please start the investigation again.");
+              clearInterval(pollInterval);
+            }
+          }
+          return;
+        }
+
+        // Reset fail count on success
+        failCount.current = 0;
         
         const data = await res.json();
         setReport(data);
-        console.log("REPORT DATA:", JSON.stringify(data, null, 2));
+        console.log("REPORT DATA SUCCESS:", data.job_id);
 
         if (data.status === "complete" || data.status === "error") {
           setLoading(false);
@@ -119,6 +145,18 @@ export default function Home() {
     return () => clearInterval(pollInterval);
   }, [jobId]);
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
+        <div className="text-neutral-500">Loading...</div>
+      </div>
+    );
+  }
+  
+  if (!user && !authLoading) {
+    return null;
+  }
+
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -130,7 +168,12 @@ export default function Home() {
       const startRes = await fetch("http://localhost:8000/api/investigate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, linkedin_url: linkedin, gst_number: gst }),
+        body: JSON.stringify({ 
+          url, 
+          linkedin_url: linkedin, 
+          gst_number: gst,
+          user_email: user?.email 
+        }),
       });
       const data = await startRes.json();
       
@@ -188,6 +231,22 @@ export default function Home() {
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-sm font-medium">
               <ShieldAlert size={16} /> ShadowTrace AI
             </div>
+            {user && (
+              <div className="flex items-center gap-3">
+                <img 
+                  src={user.image ?? ""} 
+                  className="w-8 h-8 rounded-full"
+                  alt="avatar"
+                />
+                <span className="text-sm text-neutral-400">{user.email}</span>
+                <button 
+                  onClick={signOut}
+                  className="text-xs text-neutral-600 hover:text-red-400 transition-colors"
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
           </div>
           <h1 className="text-4xl font-bold tracking-tight mt-4">Digital Due Diligence</h1>
         </header>

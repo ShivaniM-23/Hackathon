@@ -1,7 +1,7 @@
 """
 ShadowTrace AI — database.py
-PostgreSQL (via asyncpg) for reports + audit logs.
-Neo4j (via neo4j-driver) for graph data.
+Persistent storage engine with PostgreSQL/Neo4j support 
+and JSON-file fallbacks for local development resilience.
 """
 
 import json
@@ -17,26 +17,23 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# ── PostgreSQL Config (Explicit localhost for uvicorn host access) ───────────
+# ── Storage Files (Persistent fallback for uvicorn reloads) ───────────────────
+JOB_STORE_FILE = "job_store.json"
+GRAPH_STORE_FILE = "graph_store.json"
+
+# ── PostgreSQL Config ─────────────────────────────────────────────────────────
 PG_USER = os.getenv("POSTGRES_USER", "postgres")
 PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Marri@1234")
-# Force localhost because we are running outside the docker network
 PG_HOST = "localhost" 
 PG_PORT = os.getenv("POSTGRES_PORT", "5432")
 PG_DB = os.getenv("POSTGRES_DB", "shadowtrace")
-
-PG_PASSWORD_ENCODED = PG_PASSWORD.replace("@", "%40")
-PG_DSN = os.getenv(
-    "DATABASE_URL", 
-    f"postgresql://{PG_USER}:{PG_PASSWORD_ENCODED}@{PG_HOST}:{PG_PORT}/{PG_DB}"
-)
 
 # ── Neo4j Config ─────────────────────────────────────────────────────────────
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "Marri@1234")
 
-# ── Async Drivers ───────────────────────────────────────────────────────────
+# ── Drivers ──────────────────────────────────────────────────────────────────
 try:
     import asyncpg
     PG_AVAILABLE = True
@@ -49,22 +46,47 @@ try:
 except ImportError:
     NEO4J_AVAILABLE = False
 
-# ── In-memory fallback store ────────────────────────────────────────────────
-_memory_store: dict[str, dict] = {}
-_graph_store: dict[str, dict] = {}
-
 _pg_pool = None
 _neo4j_driver = None
 
+# ── File-Based Storage Helpers ───────────────────────────────────────────────
+
+def _load_store_file(filename: str) -> dict:
+    """Loads a JSON store from disk."""
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_store_file(filename: str, data: dict):
+    """Saves a JSON store to disk."""
+    try:
+        with open(filename, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        logger.error(f"File store save failed for {filename}: {e}")
+
+# ── Lifecycle ────────────────────────────────────────────────────────────────
 
 async def init_db():
-    """Initialize database connections with retry logic for Neo4j."""
+    """Initialize database connections."""
     global _pg_pool, _neo4j_driver
 
     # 1. PostgreSQL Initialization
     if PG_AVAILABLE:
         try:
-            _pg_pool = await asyncpg.create_pool(PG_DSN, min_size=1, max_size=5)
+            _pg_pool = await asyncpg.create_pool(
+                user=PG_USER,
+                password=PG_PASSWORD,
+                database=PG_DB,
+                host=PG_HOST,
+                port=PG_PORT,
+                min_size=1,
+                max_size=5
+            )
             async with _pg_pool.acquire() as conn:
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS investigations (
@@ -82,29 +104,28 @@ async def init_db():
                 """)
             logger.info(f"✅ PostgreSQL connected to {PG_DB} at {PG_HOST}")
         except Exception as e:
-            logger.warning(f"⚠️ PostgreSQL connection failed (getaddrinfo?): {e}")
+            logger.warning(f"⚠️ PostgreSQL connection failed (falling back to JSON store): {e}")
 
-    # 2. Neo4j Initialization with Retry Logic
+    # 2. Neo4j Initialization
     if NEO4J_AVAILABLE:
-        retries = 5
-        delay = 5
-        for i in range(retries):
-            try:
-                _neo4j_driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-                await _neo4j_driver.verify_connectivity()
-                logger.info(f"✅ Neo4j connected to {NEO4J_URI}")
-                break
-            except Exception as e:
-                if i < retries - 1:
-                    logger.warning(f"⏳ Neo4j not ready yet, retrying in {delay}s... ({i+1}/{retries})")
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(f"❌ Neo4j failed after {retries} attempts: {e}")
+        try:
+            _neo4j_driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+            await _neo4j_driver.verify_connectivity()
+            logger.info(f"✅ Neo4j connected to {NEO4J_URI}")
+        except Exception as e:
+            logger.warning(f"⚠️ Neo4j connection failed: {e}")
 
+# ── Operations ───────────────────────────────────────────────────────────────
 
 async def save_investigation(job_id: str, report: dict):
-    _memory_store[job_id] = report
-    if _pg_pool and report.get("status") == "complete":
+    """Saves report to persistent file fallback and PostgreSQL."""
+    # 1. File Store
+    store = _load_store_file(JOB_STORE_FILE)
+    store[job_id] = report
+    _save_store_file(JOB_STORE_FILE, store)
+
+    # 2. PostgreSQL
+    if _pg_pool and report.get("status") in ["complete", "error"]:
         try:
             await _pg_pool.execute(
                 "INSERT INTO investigations (job_id, report) VALUES ($1, $2) ON CONFLICT (job_id) DO UPDATE SET report = $2",
@@ -113,10 +134,14 @@ async def save_investigation(job_id: str, report: dict):
         except Exception as e:
             logger.error(f"PostgreSQL write error: {e}")
 
-
 async def get_investigation(job_id: str) -> Optional[dict]:
-    if job_id in _memory_store:
-        return _memory_store[job_id]
+    """Retrieves report from file store first, then PostgreSQL."""
+    # 1. File Store
+    store = _load_store_file(JOB_STORE_FILE)
+    if job_id in store:
+        return store[job_id]
+
+    # 2. PostgreSQL
     if _pg_pool:
         try:
             row = await _pg_pool.fetchrow("SELECT report FROM investigations WHERE job_id = $1", job_id)
@@ -126,14 +151,21 @@ async def get_investigation(job_id: str) -> Optional[dict]:
             logger.error(f"PostgreSQL read error: {e}")
     return None
 
-
 async def update_investigation_status(job_id: str, status: str):
-    if job_id in _memory_store:
-        _memory_store[job_id]["status"] = status
-
+    """Quick status update helper."""
+    report = await get_investigation(job_id)
+    if report:
+        report["status"] = status
+        await save_investigation(job_id, report)
 
 async def save_graph_data(job_id: str, graph: dict):
-    _graph_store[job_id] = graph
+    """Saves graph to persistent file fallback and database."""
+    # 1. File Store
+    store = _load_store_file(GRAPH_STORE_FILE)
+    store[job_id] = graph
+    _save_store_file(GRAPH_STORE_FILE, store)
+
+    # 2. PostgreSQL
     if _pg_pool:
         try:
             await _pg_pool.execute(
@@ -143,16 +175,19 @@ async def save_graph_data(job_id: str, graph: dict):
         except Exception as e:
             logger.error(f"PostgreSQL graph write error: {e}")
 
+    # 3. Neo4j
     if _neo4j_driver:
         try:
             await _persist_graph_to_neo4j(job_id, graph)
         except Exception as e:
             logger.error(f"Neo4j write error: {e}")
 
-
 async def get_graph_data(job_id: str) -> Optional[dict]:
-    if job_id in _graph_store:
-        return _graph_store[job_id]
+    """Retrieves graph from file store or PostgreSQL."""
+    store = _load_store_file(GRAPH_STORE_FILE)
+    if job_id in store:
+        return store[job_id]
+
     if _pg_pool:
         try:
             row = await _pg_pool.fetchrow("SELECT graph FROM graph_data WHERE job_id = $1", job_id)
@@ -162,28 +197,16 @@ async def get_graph_data(job_id: str) -> Optional[dict]:
             logger.error(f"PostgreSQL graph read error: {e}")
     return None
 
-
 async def _persist_graph_to_neo4j(job_id: str, graph: dict):
     """Writes nodes and edges to Neo4j."""
     async with _neo4j_driver.session() as session:
         for node in graph.get("nodes", []):
             await session.run(
-                """
-                MERGE (n:Entity {id: $id, job_id: $job_id})
-                SET n.label = $label, n.type = $type, n.risk = $risk
-                """,
-                id=node["id"], job_id=job_id,
-                label=node.get("label", ""), type=node.get("type", ""),
-                risk=node.get("risk", "unknown"),
+                "MERGE (n:Entity {id: $id, job_id: $job_id}) SET n.label = $label, n.type = $type, n.risk = $risk",
+                id=node["id"], job_id=job_id, label=node.get("label", ""), type=node.get("type", ""), risk=node.get("risk", "unknown")
             )
-
         for edge in graph.get("edges", []):
             await session.run(
-                """
-                MATCH (a:Entity {id: $source, job_id: $job_id})
-                MATCH (b:Entity {id: $target, job_id: $job_id})
-                MERGE (a)-[r:RELATED {label: $label}]->(b)
-                """,
-                source=edge["source"], target=edge["target"],
-                label=edge.get("label", "related"), job_id=job_id,
+                "MATCH (a:Entity {id: $source, job_id: $job_id}) MATCH (b:Entity {id: $target, job_id: $job_id}) MERGE (a)-[r:RELATED {label: $label}]->(b)",
+                source=edge["source"], target=edge["target"], label=edge.get("label", "related"), job_id=job_id
             )

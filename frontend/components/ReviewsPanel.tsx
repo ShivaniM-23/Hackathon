@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { MessageCircle, Star, TrendingDown, TrendingUp, AlertTriangle, ShieldCheck } from "lucide-react";
+import { MessageCircle, Star, TrendingDown, TrendingUp, AlertTriangle, ShieldCheck, Search } from "lucide-react";
 
 interface ReviewsPanelProps {
   report: {
@@ -137,7 +137,47 @@ const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
         </div>
       </div>
 
-      <div className="mt-4 p-3 bg-blue-500/5 border border-blue-500/10 rounded-xl flex items-center gap-3">
+      {/* Extended Source Check Section */}
+      <div className="mt-6 pt-6 border-t border-neutral-800">
+        <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+          <Search size={14} className="text-blue-400" />
+          Extended Source Check
+        </h3>
+        
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {Object.entries(report?.raw_data_summary?.extended_sources || {}).map(([key, data]: [string, any]) => {
+            const isFraud = key === "fraud_signals" && data.count > 3;
+            const isFound = data.found || (data.count > 0 && key !== "fraud_signals") || data.rating;
+            const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+            
+            return (
+              <div 
+                key={key} 
+                className={`px-2 py-2 rounded-lg border flex flex-col items-center justify-center text-center gap-1 transition-all ${
+                  isFraud 
+                    ? "bg-red-500/10 border-red-500/30 text-red-400" 
+                    : isFound 
+                      ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-400" 
+                      : "bg-neutral-900 border-neutral-800 text-neutral-500 opacity-60"
+                }`}
+              >
+                <span className="text-[9px] font-bold uppercase tracking-tighter line-clamp-1">{label}</span>
+                <span className="text-[14px]">
+                  {isFraud ? "❌" : isFound ? "✅" : "➖"}
+                </span>
+                {data.rating && (
+                  <span className="text-[10px] font-mono">{data.rating}/5</span>
+                )}
+                {key === "fraud_signals" && data.count > 0 && (
+                  <span className="text-[10px] font-mono">{data.count} flags</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-6 p-3 bg-blue-500/5 border border-blue-500/10 rounded-xl flex items-center gap-3">
         {sentiment === "NEGATIVE" ? (
           <AlertTriangle size={20} className="text-red-500" />
         ) : (
@@ -148,7 +188,7 @@ const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
             ? "WARNING: Community sentiment is significantly negative. High risk of fraudulent activity or poor customer experience."
             : sentiment === "POSITIVE"
             ? "TRUSTED: Strong positive community footprint across Reddit and review platforms."
-            : "UNVERIFIED: Limited public discourse. Use caution as lack of history is common in shell companies."
+            : "UNVERIFIED: Limited public discourse. Typical for established B2B firms but also common in shell companies."
           }
         </p>
       </div>

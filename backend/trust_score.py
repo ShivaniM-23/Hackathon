@@ -20,22 +20,18 @@ class ScoreFactor:
 
 def calculate_trust_score(dossier: dict) -> dict:
     """
-    Main scoring function. Returns:
-    {
-        score: int (0–100),
-        risk_level: "LOW" | "MEDIUM" | "HIGH",
-        breakdown: { factor_name: {score, max, reason} },
-        red_flags: [str],
-        factors: [ScoreFactor]
-    }
+    Main scoring function. 
+    Now expanded with extended presence signals.
+    Total max points = 115, normalized to 100.
     """
     factors: list[ScoreFactor] = []
     extracted = dossier.get("extracted", {})
-    raw_data = dossier.get("raw_data_summary", {})
-    raw_summary = _normalize_raw_summary(raw_data)
+    raw_data_summary = dossier.get("raw_data_summary", {})
+    raw_summary = _normalize_raw_summary(raw_data_summary)
+    raw_data = dossier.get("raw_data", {}) # Access for extended sources
     established = _has_established_footprint(raw_summary, extracted)
 
-    # ── Factor 1: Domain age vs founding year (20 pts) ───────────────────────
+    # ── Factor 1: Domain age (20 pts) ─────────────────────────────────────────
     factors.append(_score_domain_age(extracted, raw_summary))
 
     # ── Factor 2: Employee count consistency (15 pts) ─────────────────────────
@@ -63,16 +59,25 @@ def calculate_trust_score(dossier: dict) -> dict:
     global_factor = _score_global_recognition(raw_summary)
     factors.append(global_factor)
 
+    # ── Factor 10: Document integrity (10 pts) ─────────────────────────────────
+    factors.append(_score_documents(extracted))
+    
+    # ── Factor 11: Extended digital footprint (15 pts) ─────────────────────
+    factors.append(_score_extended_presence(extracted, raw_summary))
+
     # ── Contradiction penalty (up to -20 pts) ────────────────────────────────
     contradiction_penalty = _calculate_contradiction_penalty(dossier.get("contradictions", []))
 
-    # ── Total ─────────────────────────────────────────────────────────────────
-    raw_score = sum(f.score for f in factors)
+    # ── Normalization ─────────────────────────────────────────────────────────
+    raw_total = sum(f.score for f in factors)
+    max_total = sum(f.max_points for f in factors)
     
     # Apply AI score adjustment (based on reading actual content)
     ai_adjustment = dossier.get("score_adjustment", 0)
     
-    final_score = max(0, min(100, raw_score - contradiction_penalty + ai_adjustment))
+    # Calculate final score: (Raw / Max) * 100 - Penalty + AI Adjustment
+    normalized_score = int((raw_total / max_total) * 100) if max_total > 0 else 0
+    final_score = max(0, min(100, normalized_score - contradiction_penalty + ai_adjustment))
 
     # Also use AI's fraud and legitimacy signals for red flags
     ai_fraud_signals = dossier.get("fraud_signals", [])
@@ -83,9 +88,9 @@ def calculate_trust_score(dossier: dict) -> dict:
 
     # Add contradiction-based red flags
     for c in dossier.get("contradictions", []):
-        if c.get("severity") == "HIGH":
+        if c.get("status") == "MISMATCH" and c.get("severity") == "HIGH":
             claim = c.get("claimed") or c.get("claim") or c.get("field", "Claim")
-            red_flags.append(f"Contradiction: {claim} - {c.get('evidence', 'conflicting evidence found')}")
+            red_flags.append(f"Contradiction: {claim} — {c.get('evidence', 'conflicting evidence found')}")
 
     risk_level = (
         "LOW RISK" if final_score >= 75
@@ -107,7 +112,8 @@ def calculate_trust_score(dossier: dict) -> dict:
 
     return {
         "score": final_score,
-        "raw_score": raw_score,
+        "raw_score_sum": raw_total,
+        "max_score_sum": max_total,
         "contradiction_penalty": contradiction_penalty,
         "risk_level": risk_level,
         "breakdown": breakdown,
@@ -193,27 +199,23 @@ def _score_domain_age(extracted: dict, raw_summary: dict) -> ScoreFactor:
     MAX = 20
     domain_year = raw_summary.get("whois_creation_year")
     claimed_year_str = extracted.get("founding_year", "")
+    domain_age_days = raw_summary.get("domain_age_days", 0) or 0
 
     claimed_year = None
     if claimed_year_str:
         match = re.search(r"(19|20)\d{2}", str(claimed_year_str))
-        if match:
-            claimed_year = int(match.group())
+        if match: claimed_year = int(match.group())
 
     if domain_year is None:
         return ScoreFactor("domain_age", 5, MAX, "Could not verify domain registration date", False)
 
-    domain_age_days = raw_summary.get("domain_age_days", 0) or 0
+    # REFINED LOGIC: Domain age > 5 years is a strong trust signal
+    bonus = 5 if domain_age_days > 1825 else 0
+    
+    if domain_age_days < 180: # Very new domain (6 months)
+        return ScoreFactor("domain_age", 0, MAX, f"Domain created recently ({domain_year}) — high risk", True)
 
-    # Domain less than 1 year old — very suspicious
-    if domain_age_days < 365:
-        return ScoreFactor(
-            "domain_age", 0, MAX,
-            f"Domain created recently ({domain_year}) — only {domain_age_days} days old",
-            is_red_flag=True,
-        )
-
-    # Cross-check with claimed founding year
+    # Cross-check
     if claimed_year and domain_year:
         year_diff = domain_year - claimed_year
         if year_diff > 2:
@@ -228,14 +230,11 @@ def _score_domain_age(extracted: dict, raw_summary: dict) -> ScoreFactor:
                 f"Minor gap: domain {domain_year}, claimed founding {claimed_year}",
                 is_red_flag=False,
             )
+        elif year_diff < -3:
+            return ScoreFactor("domain_age", 0, MAX, f"Claimed founding ({claimed_year}) vs Domain ({domain_year}) mismatch", True)
 
-    # Domain > 5 years old — good sign
-    if domain_age_days > 1825:
-        return ScoreFactor("domain_age", MAX, MAX, f"Domain is {domain_age_days // 365} years old — established", False)
-
-    # Domain 1–5 years old
-    score = int((domain_age_days / 1825) * MAX)
-    return ScoreFactor("domain_age", score, MAX, f"Domain is {domain_age_days // 365} years old", False)
+    score = min(MAX, int((domain_age_days / 1825) * MAX) + bonus)
+    return ScoreFactor("domain_age", score, MAX, f"Domain established for {domain_age_days // 365} years", False)
 
 
 def _score_employee_consistency(extracted: dict, established: bool = False) -> ScoreFactor:
@@ -243,10 +242,16 @@ def _score_employee_consistency(extracted: dict, established: bool = False) -> S
     claimed = extracted.get("employee_count_claimed")
     linkedin = extracted.get("employee_count_linkedin")
 
-    if claimed is None or linkedin is None:
+    if claimed is None and linkedin is None:
+        return ScoreFactor("employee_consistency", 7, MAX, "No employee count data found", False)
+
+    if linkedin is None:
+        return ScoreFactor("employee_consistency", 8, MAX, f"Website claims {claimed} (no LinkedIn data)", False)
+    
+    if claimed is None:
         return ScoreFactor("employee_consistency", 8, MAX, "Employee data unavailable — neutral score", False)
 
-    # Parse numbers
+    # Ratio check
     try:
         claimed_n = int(str(claimed).replace("+", "").replace(",", "").strip())
         linkedin_n = int(str(linkedin).replace("+", "").replace(",", "").strip())
@@ -432,40 +437,44 @@ def _score_digital_footprint(extracted: dict, raw_summary: dict) -> ScoreFactor:
 def _score_documents(extracted: dict) -> ScoreFactor:
     MAX = 10
     issues = extracted.get("document_issues", [])
+    if issues: return ScoreFactor("document_integrity", 0, MAX, f"Document issues: {', '.join(issues[:2])}", True)
+    return ScoreFactor("document_integrity", MAX, MAX, "No document issues detected", False)
 
-    if not issues:
-        return ScoreFactor("document_integrity", MAX, MAX, "No document integrity issues detected", False)
 
-    if len(issues) > 2:
-        return ScoreFactor(
-            "document_integrity", 0, MAX,
-            f"{len(issues)} document issues: {', '.join(issues[:2])}…",
-            is_red_flag=True,
-        )
-
-    return ScoreFactor(
-        "document_integrity", 4, MAX,
-        f"Document issues: {', '.join(issues)}",
-        is_red_flag=False,
-    )
+def _score_extended_presence(extracted: dict, raw_summary: dict) -> ScoreFactor:
+    """New factor: Scans 10+ additional digital signals."""
+    MAX = 15
+    ext = raw_summary.get("extended_sources", {})
+    score = 0
+    notes = []
+    
+    # Positive signals
+    if ext.get("ambitionbox", {}).get("found"): score += 3; notes.append("AmbitionBox")
+    if ext.get("job_portals", {}).get("found"): score += 3; notes.append("Hiring")
+    if ext.get("regulatory", {}).get("found"): score += 3; notes.append("Regulatory")
+    if ext.get("crunchbase", {}).get("found"): score += 2; notes.append("Crunchbase")
+    if ext.get("general_news", {}).get("count", 0) > 5: score += 2; notes.append("News")
+    if ext.get("linkedin_news", {}).get("mentions", 0) > 3: score += 2; notes.append("LinkedIn")
+    
+    # Negative signals
+    fraud = ext.get("fraud_signals", {})
+    fraud_count = fraud.get("count", 0)
+    if fraud_count > 2:
+        return ScoreFactor("extended_presence", 0, MAX, f"⚠️ {fraud_count} fraud/scam signals found in extended search", True)
+    
+    if not notes:
+        return ScoreFactor("extended_presence", 3, MAX, "Limited footprint across extended platforms", False)
+    
+    return ScoreFactor("extended_presence", min(MAX, score), MAX, "Found in: " + ", ".join(notes), False)
 
 
 def _calculate_contradiction_penalty(contradictions: list[dict]) -> int:
-    """
-    Deducts points for each confirmed mismatch.
-    High severity mismatch: -8 pts
-    Medium: -4 pts
-    Unverified: -1 pt
-    Max penalty: 20 pts
-    """
     penalty = 0
     for c in contradictions:
         status = c.get("status", "MISMATCH")
         severity = c.get("severity", "LOW")
-
         if status == "MISMATCH":
             penalty += 8 if severity == "HIGH" else 2 if severity == "MEDIUM" else 1
         elif status == "UNVERIFIED":
             penalty += 1
-
     return min(penalty, 20)

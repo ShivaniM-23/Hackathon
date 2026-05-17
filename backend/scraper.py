@@ -226,6 +226,106 @@ def _empty_reviews() -> dict:
     }
 
 
+async def scrape_extended_sources(company_name: str, url: str, raw_data: dict):
+    """Scrapes 10+ additional sources beyond the basics via Google News RSS proxies."""
+    encoded = quote(company_name)
+    results = {}
+    
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=15) as client:
+        # 1. IndiaMART / Justdial presence (for Indian companies)
+        try:
+            jd_rss = f"https://news.google.com/rss/search?q={encoded}+justdial+reviews"
+            res = await client.get(jd_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            results["justdial"] = {"found": len(soup.find_all("item")) > 0}
+        except: results["justdial"] = {"found": False}
+        
+        # 2. AmbitionBox (India Glassdoor alternative)
+        try:
+            ab_rss = f"https://news.google.com/rss/search?q={encoded}+ambitionbox+rating"
+            res = await client.get(ab_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            rating = None
+            for item in soup.find_all("item")[:3]:
+                text = item.find("title").text if item.find("title") else ""
+                m = re.search(r'(\d\.\d)\s*(?:/5|out of 5|stars)', text)
+                if m: rating = float(m.group(1)); break
+            results["ambitionbox"] = {"rating": rating, "found": rating is not None}
+        except: results["ambitionbox"] = {"rating": None, "found": False}
+        
+        # 3. G2 / Capterra (for SaaS companies)
+        try:
+            g2_rss = f"https://news.google.com/rss/search?q={encoded}+G2+software+reviews"
+            res = await client.get(g2_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            results["g2"] = {"found": len(soup.find_all("item")) > 2}
+        except: results["g2"] = {"found": False}
+        
+        # 4. LinkedIn news mentions
+        try:
+            li_rss = f"https://news.google.com/rss/search?q={encoded}+linkedin"
+            res = await client.get(li_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            results["linkedin_news"] = {"mentions": len(soup.find_all("item"))}
+        except: results["linkedin_news"] = {"mentions": 0}
+        
+        # 5. Crunchbase presence check via news
+        try:
+            cb_rss = f"https://news.google.com/rss/search?q={encoded}+crunchbase+funding"
+            res = await client.get(cb_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            results["crunchbase"] = {"found": len(soup.find_all("item")) > 0}
+        except: results["crunchbase"] = {"found": False}
+        
+        # 6. YouTube presence (company channel or mentions)
+        try:
+            yt_rss = f"https://news.google.com/rss/search?q={encoded}+youtube+channel"
+            res = await client.get(yt_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            results["youtube"] = {"found": len(soup.find_all("item")) > 0}
+        except: results["youtube"] = {"found": False}
+        
+        # 7. Government/regulatory mentions (MCA, ROC for Indian companies)
+        try:
+            mca_rss = f"https://news.google.com/rss/search?q={encoded}+MCA+ROC+registered+company"
+            res = await client.get(mca_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            results["regulatory"] = {"found": len(soup.find_all("item")) > 0}
+        except: results["regulatory"] = {"found": False}
+        
+        # 8. Job portals presence (Naukri, Indeed, LinkedIn Jobs)
+        try:
+            jobs_rss = f"https://news.google.com/rss/search?q={encoded}+jobs+hiring+careers"
+            res = await client.get(jobs_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            results["job_portals"] = {"found": len(soup.find_all("item")) > 2,
+                                       "count": len(soup.find_all("item"))}
+        except: results["job_portals"] = {"found": False, "count": 0}
+        
+        # 9. News coverage volume (general press)
+        try:
+            news_rss = f"https://news.google.com/rss/search?q={encoded}&hl=en-IN"
+            res = await client.get(news_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            results["general_news"] = {"count": len(soup.find_all("item"))}
+        except: results["general_news"] = {"count": 0}
+        
+        # 10. ScamAdviser / fraud databases via news search
+        try:
+            scam_rss = f"https://news.google.com/rss/search?q={encoded}+scam+fraud+complaint+cheated"
+            res = await client.get(scam_rss)
+            soup = BeautifulSoup(res.text, "xml")
+            neg_items = soup.find_all("item")
+            results["fraud_signals"] = {
+                "count": len(neg_items),
+                "titles": [i.find("title").text for i in neg_items[:3] if i.find("title")]
+            }
+        except: results["fraud_signals"] = {"count": 0, "titles": []}
+    
+    raw_data["extended_sources"] = results
+    logger.info(f"Extended sources scraped: {list(results.keys())}")
+
+
 async def scrape_company(url: str, linkedin_url: str = None, gst_number: str = None) -> dict:
     """Main entry point. Accepts one URL, auto-discovers the rest."""
     raw_data = {
@@ -253,6 +353,7 @@ async def scrape_company(url: str, linkedin_url: str = None, gst_number: str = N
         scrape_google_news(url, company_name, raw_data),
         scrape_reviews(company_name, raw_data),
         scrape_wikipedia(company_name, raw_data),
+        scrape_extended_sources(company_name, url, raw_data),
     ]
     if final_linkedin:
         tasks.append(scrape_linkedin(final_linkedin, raw_data))
@@ -261,6 +362,7 @@ async def scrape_company(url: str, linkedin_url: str = None, gst_number: str = N
 
     # Step 4: Build summary
     summary = build_summary(raw_data)
+    summary["extended_sources"] = raw_data.get("extended_sources", {})
     raw_data["summary"] = summary
     raw_data["website_text"] = summary.get("combined_text", "")
     raw_data["domain_age_days"] = raw_data.get("whois", {}).get("domain_age_days", 0)
@@ -395,8 +497,12 @@ def extract_clean_text(soup: BeautifulSoup) -> str:
 async def scrape_whois(url: str, raw_data: dict):
     try:
         domain = urlparse(url if "://" in url else "https://" + url).netloc.replace("www.", "")
+        # Using the standard python-whois library call
         loop = asyncio.get_event_loop()
         w = await loop.run_in_executor(None, whois.whois, domain)
+
+        if not w or not getattr(w, "creation_date", None):
+            raise ValueError("WHOIS returned empty or invalid data")
 
         creation = w.creation_date
         if isinstance(creation, list):
@@ -419,7 +525,7 @@ async def scrape_whois(url: str, raw_data: dict):
             "domain_age_days": age_days,
         }
     except Exception as e:
-        logger.warning(f"WHOIS failed: {e}")
+        logger.warning(f"WHOIS failed for {url}: {e}")
         raw_data["whois"] = {"domain_age_days": 365, "error": str(e)}
 
 

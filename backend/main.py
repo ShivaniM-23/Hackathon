@@ -61,6 +61,7 @@ class InvestigateRequest(BaseModel):
     url: str
     linkedin_url: Optional[str] = None
     gst_number: Optional[str] = None
+    user_email: Optional[str] = None
 
 class InvestigateResponse(BaseModel):
     job_id: str
