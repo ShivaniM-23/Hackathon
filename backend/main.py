@@ -28,6 +28,7 @@ from database import (
     get_graph_data,
     init_db,
 )
+from cache import init_cache, close_cache, get_cached, set_cached, invalidate
 from pdf_export import generate_pdf_report
 
 # ── Load Environment and Logging ─────────────────────────────────────────────
@@ -54,6 +55,12 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     await init_db()
+    await init_cache()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await close_cache()
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -63,11 +70,13 @@ class InvestigateRequest(BaseModel):
     linkedin_url: Optional[str] = None
     gst_number: Optional[str] = None
     user_email: Optional[str] = None
+    force_refresh: Optional[bool] = False
 
 class InvestigateResponse(BaseModel):
     job_id: str
     status: str
     message: str
+    cached: bool = False
 
 class ChatRequest(BaseModel):
     job_id: str
@@ -171,6 +180,8 @@ async def run_investigation(job_id: str, request: InvestigateRequest):
             "progress_steps": job_data["progress_steps"] + ["✅ Investigation complete."]
         }
         await save_investigation(job_id, final_report)
+        # Write to Redis cache so repeat requests are instant
+        await set_cached(request.url, final_report)
 
     except Exception as e:
         logger.error(f"Investigation error: {e}")
@@ -277,14 +288,35 @@ def health(): return {"status": "ok"}
 
 @app.post("/api/investigate", response_model=InvestigateResponse)
 async def investigate(request: InvestigateRequest, background_tasks: BackgroundTasks):
-    job_id = str(uuid.uuid4())
     if not request.url: raise HTTPException(400, "URL required")
-    
+
+    # ── Redis cache check ────────────────────────────────────────────────────
+    if not request.force_refresh:
+        cached = await get_cached(request.url)
+        if cached:
+            job_id = cached["job_id"]
+            # Re-persist to file store in case job_store.json was cleared
+            # (ensures GET /api/report/<job_id> returns 200, not 404)
+            existing = await get_investigation(job_id)
+            if not existing:
+                await save_investigation(job_id, cached)
+                logger.info(f"♻️  Restored cached report {job_id} to file store")
+            return {
+                "job_id": job_id,
+                "status": "complete",
+                "message": f"Cached result (score: {cached.get('trust_score', '?')}). Pass force_refresh=true to re-investigate.",
+                "cached": True,
+            }
+    else:
+        # force_refresh=true: clear the old cache entry first
+        await invalidate(request.url)
+
+    job_id = str(uuid.uuid4())
     await save_investigation(job_id, {
         "job_id": job_id, "status": "queued", "progress_pct": 0, "progress_steps": ["Queued..."]
     })
     background_tasks.add_task(run_investigation, job_id, request)
-    return {"job_id": job_id, "status": "queued", "message": "Investigation started"}
+    return {"job_id": job_id, "status": "queued", "message": "Investigation started", "cached": False}
 
 @app.get("/api/report/{job_id}")
 async def get_report(job_id: str):
@@ -335,23 +367,34 @@ async def export_pdf(job_id: str):
 
 @app.get("/api/history")
 async def get_history():
-    """Returns lightweight summaries of all completed investigations for the history dashboard."""
+    """Returns one entry per unique URL, deduplicating any legacy duplicates."""
+    from cache import normalize_url
     all_reports = await get_all_investigations()
-    history = []
+
+    # Build a map: normalized_url → best report (highest trust score wins)
+    seen: dict[str, dict] = {}
     for job_id, report in all_reports.items():
         if report.get("status") != "complete":
             continue
-        history.append({
-            "job_id": job_id,
-            "company_name": report.get("company_name", "Unknown"),
-            "url": report.get("url", ""),
-            "trust_score": report.get("trust_score", 0),
-            "risk_level": report.get("risk_level", "UNKNOWN"),
-            "legitimacy_verdict": report.get("legitimacy_verdict", "UNCERTAIN"),
-            "red_flags_count": len(report.get("red_flags", [])),
-            "contradictions_count": len(report.get("contradictions", [])),
-            "tier": report.get("tier"),
-        })
-    # Sort by trust score ascending (most risky first)
-    history.sort(key=lambda x: x.get("trust_score", 0))
+        key = normalize_url(report.get("url", "") or report.get("company_name", job_id))
+        existing = seen.get(key)
+        if not existing or report.get("trust_score", 0) > existing.get("trust_score", 0):
+            seen[key] = report
+
+    history = [
+        {
+            "job_id": r["job_id"],
+            "company_name": r.get("company_name", "Unknown"),
+            "url": r.get("url", ""),
+            "trust_score": r.get("trust_score", 0),
+            "risk_level": r.get("risk_level", "UNKNOWN"),
+            "legitimacy_verdict": r.get("legitimacy_verdict", "UNCERTAIN"),
+            "red_flags_count": len(r.get("red_flags", [])),
+            "contradictions_count": len(r.get("contradictions", [])),
+            "tier": r.get("tier"),
+        }
+        for r in seen.values()
+    ]
+    # Most risky first
+    history.sort(key=lambda x: x["trust_score"])
     return history

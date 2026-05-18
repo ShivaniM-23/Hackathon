@@ -19,6 +19,8 @@ python-whois>=0.9.4,<1.0.0
 asyncpg>=0.29.0,<1.0.0
 # neo4j: official async driver for graph data persistence
 neo4j>=5.20.0,<6.0.0
+# redis: async cache layer for investigation results
+redis[hiredis]>=5.0.0,<6.0.0
 
 # ── PDF Export ────────────────────────────────────────────────────────────────
 reportlab>=4.1.0,<5.0.0
