@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from "next/server"
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!
-const REDIRECT_URI = "http://localhost:3000/api/google-auth/callback"
+const APP_URL = process.env.NEXTAUTH_URL || "http://localhost:3000"
+const REDIRECT_URI = `${APP_URL}/api/google-auth/callback`
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const code = searchParams.get("code")
 
   if (!code) {
-    return NextResponse.redirect("http://localhost:3000/login?error=no_code")
+    return NextResponse.redirect(`${APP_URL}/login?error=no_code`)
   }
 
   try {
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     const user = await userRes.json()
 
     // Store user in cookie
-    const res = NextResponse.redirect("http://localhost:3000")
+    const res = NextResponse.redirect(APP_URL)
     res.cookies.set("user", JSON.stringify({
       name: user.name,
       email: user.email,
@@ -47,6 +48,6 @@ export async function GET(req: NextRequest) {
     return res
 
   } catch (error) {
-    return NextResponse.redirect("http://localhost:3000/login?error=auth_failed")
+    return NextResponse.redirect(`${APP_URL}/login?error=auth_failed`)
   }
 }

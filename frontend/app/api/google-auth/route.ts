@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!
-const REDIRECT_URI = "http://localhost:3000/api/google-auth/callback"
+const APP_URL = process.env.NEXTAUTH_URL || "http://localhost:3000"
+const REDIRECT_URI = `${APP_URL}/api/google-auth/callback`
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (action === "logout") {
-    const res = NextResponse.redirect("http://localhost:3000/login")
+    const res = NextResponse.redirect(`${APP_URL}/login`)
     res.cookies.delete("user")
     return res
   }

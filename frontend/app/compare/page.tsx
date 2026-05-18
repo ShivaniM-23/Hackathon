@@ -1,5 +1,7 @@
 "use client";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, Tooltip } from 'recharts';
@@ -42,7 +44,7 @@ export default function ComparePage() {
     const ids = [];
     for (const url of validUrls) {
       try {
-        const res = await fetch("http://localhost:8000/api/investigate", {
+        const res = await fetch(`${API_URL}/api/investigate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url, force_new: false })
@@ -66,7 +68,7 @@ export default function ComparePage() {
 
       for (const id of jobIds) {
         try {
-          const res = await fetch(`http://localhost:8000/api/report/${id}`);
+          const res = await fetch(`${API_URL}/api/report/${id}`);
           if (res.status === 404) {
             // Still initializing
             allComplete = false;
@@ -304,7 +306,7 @@ export default function ComparePage() {
                     </div>
 
                     <button
-                      onClick={() => window.open(`http://localhost:8000/api/export/${r.job_id}`)}
+                      onClick={() => window.open(`${API_URL}/api/export/${r.job_id}`)}
                       className="mt-6 w-full py-3 bg-neutral-800 hover:bg-neutral-700 text-sm font-bold rounded-xl transition-colors"
                     >
                       Download Full Report

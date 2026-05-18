@@ -1,9 +1,11 @@
-venv/
 __pycache__/
+*.pyc
+venv/
 .env
 job_store.json
 graph_store.json
 vendor_inbox.json
 gmail_watermark.json
 uid_watermark.json
-static/screenshots/
+static/screenshots/*
+/tmp/

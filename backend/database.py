@@ -24,7 +24,7 @@ GRAPH_STORE_FILE = "graph_store.json"
 # ── PostgreSQL Config ─────────────────────────────────────────────────────────
 PG_USER = os.getenv("POSTGRES_USER", "postgres")
 PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Marri@1234")
-PG_HOST = "localhost" 
+PG_HOST = os.getenv("POSTGRES_HOST", "localhost")
 PG_PORT = os.getenv("POSTGRES_PORT", "5432")
 PG_DB = os.getenv("POSTGRES_DB", "shadowtrace")
 

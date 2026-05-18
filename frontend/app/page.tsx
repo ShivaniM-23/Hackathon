@@ -1,5 +1,7 @@
 "use client";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 import { useState, useEffect, useRef } from "react";
 import { useUser } from "./hooks/useUser";
 import { useRouter } from "next/navigation";
@@ -124,7 +126,7 @@ export default function Home() {
 
     const poll = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/report/${jobId}`);
+        const res = await fetch(`${API_URL}/api/report/${jobId}`);
 
         if (!res.ok) {
           if (res.status === 404) {
@@ -183,7 +185,7 @@ export default function Home() {
     setJobId(null); // Reset prev job
 
     try {
-      const startRes = await fetch("http://localhost:8000/api/investigate", {
+      const startRes = await fetch(`${API_URL}/api/investigate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -217,7 +219,7 @@ export default function Home() {
     setChatLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/api/chat", {
+      const response = await fetch(`${API_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: newUserMsg, job_id: report.job_id }),
@@ -376,7 +378,7 @@ export default function Home() {
 
             {report?.status === "complete" && (
               <button
-                onClick={() => window.open(`http://localhost:8000/api/export/${report.job_id}`)}
+                onClick={() => window.open(`${API_URL}/api/export/${report.job_id}`)}
                 className="w-full flex items-center justify-center gap-2 p-4 bg-neutral-900 border border-neutral-800 rounded-xl hover:bg-neutral-800 transition-all"
               >
                 <Download size={18} /> Download PDF Report
