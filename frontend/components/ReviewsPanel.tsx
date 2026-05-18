@@ -8,6 +8,7 @@ interface ReviewsPanelProps {
     raw_data_summary?: {
       reviews?: unknown;
       discovered_links?: Record<string, string | null>;
+      extended_sources?: Record<string, any>;
     };
     reviews?: unknown;
     discovered_links?: Record<string, string | null>;

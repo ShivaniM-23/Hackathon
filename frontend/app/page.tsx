@@ -4,10 +4,10 @@ import { useState, useEffect, useRef } from "react";
 import { useUser } from "./hooks/useUser";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Search, ShieldAlert, CheckCircle, AlertTriangle, 
-  XCircle, ArrowRight, MessageSquare, Send, 
-  FileText, Activity, Globe, Info, Download
+import {
+  Search, ShieldAlert, CheckCircle, AlertTriangle,
+  XCircle, ArrowRight, MessageSquare, Send,
+  FileText, Activity, Globe, Info, Download, Mail
 } from "lucide-react";
 import GraphView from "../components/GraphView";
 import ContradictionTable from "../components/ContradictionTable";
@@ -37,6 +37,7 @@ interface Report {
   entities?: unknown[];
   relationships?: unknown[];
   graph?: unknown;
+  tier?: number;
   score_breakdown: Record<string, {
     score: number;
     max: number;
@@ -53,10 +54,10 @@ interface Report {
   reviews?: unknown;
   progress_steps?: string[];
   progress?: number;
-  steps?: {step: string, detail: string, pct: number}[];
+  steps?: { step: string, detail: string, pct: number }[];
 }
 
-const LoadingSkeleton = ({ steps }: { steps?: {step: string, detail: string, pct: number}[] }) => (
+const LoadingSkeleton = ({ steps }: { steps?: { step: string, detail: string, pct: number }[] }) => (
   <div className="space-y-6 animate-pulse">
     <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-8">
       <div className="flex items-center gap-4 mb-6">
@@ -88,17 +89,34 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-  
+
   // Chat state
   const [chatMessage, setChatMessage] = useState("");
-  const [chatHistory, setChatHistory] = useState<{role: string, content: string}[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ role: string, content: string }[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
 
   // --- Polling Logic (Fix for Bug 2 & Persistence Support) ---
   const failCount = useRef(0);
 
   useEffect(() => {
-    if (!user && !authLoading) router.push("/login");
+    if (!user && !authLoading) {
+      router.push("/login");
+      return;
+    }
+
+    const storedUrl = localStorage.getItem("investigate_url");
+    const storedJobId = localStorage.getItem("investigate_job_id");
+    
+    if (storedUrl) {
+      setUrl(storedUrl);
+      localStorage.removeItem("investigate_url");
+    }
+    
+    if (storedJobId) {
+      setJobId(storedJobId);
+      setLoading(true);
+      localStorage.removeItem("investigate_job_id");
+    }
   }, [user, authLoading, router]);
 
   useEffect(() => {
@@ -107,7 +125,7 @@ export default function Home() {
     const poll = async () => {
       try {
         const res = await fetch(`http://localhost:8000/api/report/${jobId}`);
-        
+
         if (!res.ok) {
           if (res.status === 404) {
             failCount.current += 1;
@@ -124,7 +142,7 @@ export default function Home() {
 
         // Reset fail count on success
         failCount.current = 0;
-        
+
         const data = await res.json();
         setReport(data);
         console.log("REPORT DATA SUCCESS:", data.job_id);
@@ -152,7 +170,7 @@ export default function Home() {
       </div>
     );
   }
-  
+
   if (!user && !authLoading) {
     return null;
   }
@@ -168,15 +186,15 @@ export default function Home() {
       const startRes = await fetch("http://localhost:8000/api/investigate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          url, 
-          linkedin_url: linkedin, 
+        body: JSON.stringify({
+          url,
+          linkedin_url: linkedin,
           gst_number: gst,
-          user_email: user?.email 
+          user_email: user?.email
         }),
       });
       const data = await startRes.json();
-      
+
       if (data.job_id) {
         setJobId(data.job_id); // This triggers the useEffect polling
       } else {
@@ -192,12 +210,12 @@ export default function Home() {
   const handleChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatMessage.trim() || !report) return;
-    
+
     const newUserMsg = chatMessage;
     setChatHistory(prev => [...prev, { role: "user", content: newUserMsg }]);
     setChatMessage("");
     setChatLoading(true);
-    
+
     try {
       const response = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
@@ -225,7 +243,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans">
       <div className="max-w-7xl mx-auto px-6 py-12">
-        
+
         <header className="mb-12">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-sm font-medium">
@@ -233,13 +251,13 @@ export default function Home() {
             </div>
             {user && (
               <div className="flex items-center gap-3">
-                <img 
-                  src={user.image ?? ""} 
+                <img
+                  src={user.image ?? ""}
                   className="w-8 h-8 rounded-full"
                   alt="avatar"
                 />
                 <span className="text-sm text-neutral-400">{user.email}</span>
-                <button 
+                <button
                   onClick={signOut}
                   className="text-xs text-neutral-600 hover:text-red-400 transition-colors"
                 >
@@ -252,8 +270,8 @@ export default function Home() {
         </header>
 
         <div className="grid lg:grid-cols-12 gap-8">
-          
-                    {/* Sidebar */}
+
+          {/* Sidebar */}
           <aside className="lg:col-span-4 space-y-6">
             <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
               <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
@@ -262,27 +280,35 @@ export default function Home() {
               <form onSubmit={handleAnalyze} className="space-y-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-neutral-500 uppercase ml-1">Company Website</label>
-                  <input 
+                  <input
                     type="url" required placeholder="https://company.com"
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-blue-500 text-sm"
                     value={url} onChange={(e) => setUrl(e.target.value)}
                   />
                 </div>
-                
+
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-neutral-500 uppercase ml-1">LinkedIn URL (Optional)</label>
-                  <input 
+                  <input
                     type="url" placeholder="https://linkedin.com/company/..."
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-blue-500 text-sm"
                     value={linkedin} onChange={(e) => setLinkedin(e.target.value)}
                   />
                 </div>
 
-                <button 
+                <button
                   type="submit" disabled={loading}
                   className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold transition-all disabled:opacity-50 shadow-lg shadow-blue-500/10"
                 >
                   {loading ? "Discovering & Analyzing..." : "Start Investigation"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => window.location.href = '/compare'}
+                  className="w-full bg-neutral-950 border border-neutral-800 hover:bg-neutral-800 py-3 rounded-xl font-bold text-neutral-400 hover:text-white transition-all flex items-center justify-center gap-2"
+                >
+                  <Activity size={16} /> Multi-Vendor Comparison
                 </button>
               </form>
 
@@ -347,9 +373,9 @@ export default function Home() {
                 </div>
               )}
             </div>
-            
+
             {report?.status === "complete" && (
-              <button 
+              <button
                 onClick={() => window.open(`http://localhost:8000/api/export/${report.job_id}`)}
                 className="w-full flex items-center justify-center gap-2 p-4 bg-neutral-900 border border-neutral-800 rounded-xl hover:bg-neutral-800 transition-all"
               >
@@ -374,16 +400,34 @@ export default function Home() {
             <AnimatePresence>
               {report?.status === "complete" && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                  
-                                    {/* Verdict Badge */}
-                  {report.legitimacy_verdict && (
-                    <div className="flex items-center gap-3 mb-4">
-                      <span className="text-sm text-neutral-400 font-semibold uppercase">AI Verdict:</span>
-                      <span className={`px-4 py-1.5 rounded-full text-xs font-bold border ${verdictColors[report.legitimacy_verdict] || verdictColors.UNCERTAIN}`}>
-                        {report.legitimacy_verdict.replace(/_/g, " ")}
-                      </span>
+
+                  {/* Executive Summary Panel */}
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-xl mb-6">
+                    <div className="flex flex-wrap items-center justify-between mb-4 gap-4">
+                      <h3 className="text-white font-bold uppercase flex items-center gap-2">
+                        <ShieldAlert size={18} className="text-blue-500" /> Executive Summary
+                      </h3>
+                      <div className="flex gap-2">
+                        {report.tier && (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                            {report.tier === 1 ? 'TIER 1: ENTERPRISE' : report.tier === 2 ? 'TIER 2: ESTABLISHED SME' : 'TIER 3: UNKNOWN'}
+                          </span>
+                        )}
+                        {report.legitimacy_verdict && (
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold border ${verdictColors[report.legitimacy_verdict] || verdictColors.UNCERTAIN}`}>
+                            {report.legitimacy_verdict.replace(/_/g, " ")}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  )}
+                    {report.ai_reasoning && (
+                      <div className="bg-neutral-950 p-5 rounded-xl border border-neutral-800 text-sm text-neutral-300 leading-relaxed relative">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-blue-500/50 rounded-l-xl"></div>
+                        <span className="font-semibold text-blue-400 mr-2">AI Summary:</span>
+                        {report.ai_reasoning}
+                      </div>
+                    )}
+                  </div>
 
                   {/* Score Breakdown Section */}
                   <ScoreBreakdown
@@ -408,7 +452,7 @@ export default function Home() {
                     </div>
                   )}
 
-                                    {/* Legitimacy Signals */}
+                  {/* Legitimacy Signals */}
                   {(report.legitimacy_signals ?? []).length > 0 && (
                     <div className="bg-green-500/5 border border-green-500/20 rounded-2xl p-6">
                       <h3 className="text-green-400 text-xs font-bold uppercase mb-4 flex items-center gap-2">
@@ -438,7 +482,7 @@ export default function Home() {
                         < Globe size={16} /> Knowledge Graph
                       </h3>
                       <div className="flex-1 bg-neutral-950 rounded-xl border border-neutral-800 overflow-hidden relative">
-                        <GraphView 
+                        <GraphView
                           report={report}
                         />
                       </div>

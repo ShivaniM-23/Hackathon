@@ -5,7 +5,7 @@ Entry point: all routes, CORS, startup events.
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import uuid
@@ -299,15 +299,7 @@ async def get_graph(job_id: str):
     if not graph: raise HTTPException(404, "Graph not found")
     return graph
 
-@app.get("/api/vendor-inbox")
-async def get_vendor_inbox():
-    """Returns the list of automated vendor emails intercepted by gmail_watcher.py"""
-    import os, json
-    inbox_file = "vendor_inbox.json"
-    if os.path.exists(inbox_file):
-        with open(inbox_file, "r") as f:
-            return json.load(f)
-    return []
+
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
