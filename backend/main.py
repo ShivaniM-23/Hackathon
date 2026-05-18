@@ -287,27 +287,11 @@ async def investigate(request: InvestigateRequest, background_tasks: BackgroundT
 
 @app.get("/api/report/{job_id}")
 async def get_report(job_id: str):
-    report = await get_investigation(job_id)
-    if not report: raise HTTPException(404, "Report not found")
-    if report.get("status") == "complete":
-        report["graph"] = await get_graph_data(job_id)
-    return report
-
-@app.get("/api/graph/{job_id}")
-async def get_graph(job_id: str):
-    graph = await get_graph_data(job_id)
-    if not graph: raise HTTPException(404, "Graph not found")
-    return graph
-
-@app.get("/api/vendor-inbox")
-async def get_vendor_inbox():
-    """Returns the list of automated vendor emails intercepted by gmail_watcher.py"""
-    import os, json
-    inbox_file = "vendor_inbox.json"
-    if os.path.exists(inbox_file):
-        with open(inbox_file, "r") as f:
-            return json.load(f)
-    return []
+    job = await get_investigation(job_id)
+    if not job: raise HTTPException(404, "Job not found")
+    if job.get("status") == "complete":
+        job["graph"] = await get_graph_data(job_id)
+    return job
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):

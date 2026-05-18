@@ -1,10 +1,8 @@
 # chat.py — Anthropic API powered, deployment-ready
 import httpx, os, re
-from dotenv import load_dotenv
-load_dotenv()
 
-GROQ_API_KEY = os.getenv("ANTHROPIC_API_KEY") # Note: using the same env var name you set
-API_URL = "https://api.groq.com/openai/v1/chat/completions"
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+API_URL = "https://api.anthropic.com/v1/messages"
 
 async def chat_with_dossier(message: str, dossier: dict, confidence_threshold=0.6) -> dict:
     guard = _topic_guard(message, dossier)
@@ -13,32 +11,34 @@ async def chat_with_dossier(message: str, dossier: dict, confidence_threshold=0.
 
     context = _build_context(dossier)
 
-    if not GROQ_API_KEY:
+    if not ANTHROPIC_API_KEY:
         return template_answer(message, dossier)
     
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(API_URL, 
                 headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
                 },
                 json={
-                    "model": "llama-3.1-8b-instant",
-                    "messages": [
-                        {
-                            "role": "system", 
-                            "content": f"You are ShadowTrace AI, a due diligence analyst.\nAnswer ONLY using this company dossier. Never make up facts.\nCite your source. Give detailed, structured answers when the user asks for detail.\nAdd [Confidence: X/10] at the end.\n\nDOSSIER:\n{context}"
-                        },
-                        {"role": "user", "content": message}
-                    ]
+                    "model": "claude-haiku-4-5-20251001",  # cheapest, fastest
+                    "max_tokens": 900,
+                    "system": f"""You are ShadowTrace AI, a due diligence analyst.
+Answer ONLY using this company dossier. Never make up facts.
+Cite your source. Give detailed, structured answers when the user asks for detail.
+Add [Confidence: X/10] at the end.
+
+DOSSIER:
+{context}""",
+                    "messages": [{"role": "user", "content": message}]
                 }
             )
             if resp.status_code >= 400:
-                print(f"API Error: {resp.status_code} - {resp.text}")
                 return template_answer(message, dossier)
             data = resp.json()
-            text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            text = data.get("content", [{}])[0].get("text", "")
             if not text:
                 return template_answer(message, dossier)
             confidence = _extract_confidence(text)
