@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useSyncExternalStore } from "react"
 
 interface User {
   name: string
@@ -7,21 +7,40 @@ interface User {
   image: string
 }
 
-export function useUser() {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+let cachedCookie = ""
+let cachedUser: User | null = null
 
-  useEffect(() => {
-    try {
-      const cookies = document.cookie.split(";")
-      const userCookie = cookies.find(c => c.trim().startsWith("user="))
-      if (userCookie) {
-        const val = decodeURIComponent(userCookie.split("=")[1])
-        setUser(JSON.parse(val))
-      }
-    } catch (e) {}
-    setLoading(false)
-  }, [])
+function subscribe() {
+  return () => {}
+}
+
+function readUserCookie(): User | null {
+  try {
+    const userCookie = document.cookie
+      .split(";")
+      .find(c => c.trim().startsWith("user="))
+      ?.trim() ?? ""
+
+    if (userCookie === cachedCookie) return cachedUser
+
+    cachedCookie = userCookie
+    if (!userCookie) {
+      cachedUser = null
+      return cachedUser
+    }
+
+    const val = decodeURIComponent(userCookie.split("=")[1])
+    cachedUser = JSON.parse(val)
+    return cachedUser
+  } catch {
+    cachedUser = null
+    return null
+  }
+}
+
+export function useUser() {
+  const user = useSyncExternalStore(subscribe, readUserCookie, () => null)
+  const loading = false
 
   const signIn = () => {
     window.location.href = "/api/google-auth?action=login"

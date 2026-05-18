@@ -1,21 +1,30 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useUser } from "./hooks/useUser";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Search, ShieldAlert, CheckCircle, AlertTriangle, 
-  XCircle, ArrowRight, MessageSquare, Send, 
-  FileText, Activity, Globe, Info, Download
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  Download,
+  FileSearch,
+  Gauge,
+  Globe2,
+  Link2,
+  LogOut,
+  Network,
+  Search,
+  ShieldAlert,
+  Sparkles,
 } from "lucide-react";
-import GraphView from "../components/GraphView";
-import ContradictionTable from "../components/ContradictionTable";
+import { useUser } from "./hooks/useUser";
 import ChatPanel from "../components/ChatPanel";
+import ContradictionTable from "../components/ContradictionTable";
+import GraphView from "../components/GraphView";
 import ReviewsPanel from "../components/ReviewsPanel";
 import ScoreBreakdown from "../components/ScoreBreakdown";
 
-// --- Types ---
 interface Contradiction {
   field: string;
   claimed: string;
@@ -48,36 +57,81 @@ interface Report {
     scraped_sources?: string[];
     pages_scraped?: number;
     reviews?: unknown;
-    discovered_links?: Record<string, string | null>;
+    extended_sources?: Record<string, {
+      found?: boolean;
+      count?: number;
+      rating?: number;
+    }>;
   };
   reviews?: unknown;
   progress_steps?: string[];
-  progress?: number;
-  steps?: {step: string, detail: string, pct: number}[];
+  progress_pct?: number;
 }
 
-const LoadingSkeleton = ({ steps }: { steps?: {step: string, detail: string, pct: number}[] }) => (
-  <div className="space-y-6 animate-pulse">
-    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-8">
-      <div className="flex items-center gap-4 mb-6">
-        <div className="w-12 h-12 bg-neutral-800 rounded-full animate-spin border-2 border-t-blue-500 border-neutral-700" />
+type ViewKey = "overview" | "evidence" | "graph";
+
+const viewTabs: { key: ViewKey; label: string; icon: typeof Gauge }[] = [
+  { key: "overview", label: "Overview", icon: Gauge },
+  { key: "evidence", label: "Evidence", icon: FileSearch },
+  { key: "graph", label: "Graph", icon: Network },
+];
+
+const verdictStyles: Record<string, string> = {
+  LEGITIMATE: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+  LIKELY_LEGITIMATE: "border-teal-500/25 bg-teal-500/10 text-teal-300",
+  UNCERTAIN: "border-amber-500/25 bg-amber-500/10 text-amber-300",
+  LIKELY_FRAUDULENT: "border-orange-500/25 bg-orange-500/10 text-orange-300",
+  FRAUDULENT: "border-red-500/25 bg-red-500/10 text-red-300",
+};
+
+function riskTone(risk?: string) {
+  if (risk === "LOW") return "text-emerald-300 bg-emerald-500/10 border-emerald-500/20";
+  if (risk === "HIGH") return "text-red-300 bg-red-500/10 border-red-500/20";
+  return "text-amber-300 bg-amber-500/10 border-amber-500/20";
+}
+
+function StatCard({ label, value, tone = "neutral" }: { label: string; value: string | number; tone?: "neutral" | "good" | "warn" | "bad" }) {
+  const tones = {
+    neutral: "border-slate-800 bg-slate-900/70 text-slate-100",
+    good: "border-emerald-500/20 bg-emerald-500/10 text-emerald-200",
+    warn: "border-amber-500/20 bg-amber-500/10 text-amber-200",
+    bad: "border-red-500/20 bg-red-500/10 text-red-200",
+  };
+  return (
+    <div className={`rounded-lg border p-3 ${tones[tone]}`}>
+      <div className="text-[10px] font-semibold uppercase text-slate-400">{label}</div>
+      <div className="mt-1 text-xl font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function ProgressPanel({ report }: { report: Report | null }) {
+  const pct = report?.progress_pct ?? 10;
+  const steps = report?.progress_steps ?? ["Queued investigation"];
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-5">
+      <div className="mb-4 flex items-center justify-between">
         <div>
-          <div className="h-5 w-48 bg-neutral-800 rounded mb-2" />
-          <div className="h-3 w-32 bg-neutral-800 rounded opacity-50" />
+          <p className="text-sm font-semibold text-slate-100">Investigation running</p>
+          <p className="text-xs text-slate-500">Collecting sources and building the report.</p>
         </div>
+        <div className="h-9 w-9 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-400" />
       </div>
-      <div className="space-y-3">
-        {(steps ?? []).slice(-3).map((s, i) => (
-          <div key={i} className="flex items-center gap-3 text-xs text-neutral-500">
-            <span className="text-blue-500">→</span>
-            <span>{s.detail}</span>
+      <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+        <div className="h-full rounded-full bg-cyan-400 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-4 space-y-2">
+        {steps.slice(-4).map((step, index) => (
+          <div key={`${step}-${index}`} className="flex items-start gap-2 text-xs text-slate-400">
+            <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-cyan-300" />
+            <span>{step}</span>
           </div>
         ))}
       </div>
     </div>
-    <div className="h-64 bg-neutral-900 border border-neutral-800 rounded-2xl" />
-  </div>
-);
+  );
+}
 
 export default function Home() {
   const { user, loading: authLoading, signOut } = useUser();
@@ -88,13 +142,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-  
-  // Chat state
-  const [chatMessage, setChatMessage] = useState("");
-  const [chatHistory, setChatHistory] = useState<{role: string, content: string}[]>([]);
-  const [chatLoading, setChatLoading] = useState(false);
-
-  // --- Polling Logic (Fix for Bug 2 & Persistence Support) ---
+  const [activeView, setActiveView] = useState<ViewKey>("overview");
   const failCount = useRef(0);
 
   useEffect(() => {
@@ -106,32 +154,29 @@ export default function Home() {
 
     const poll = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/report/${jobId}`);
-        
+        const res = await fetch(`/api/report/${jobId}`);
+
         if (!res.ok) {
           if (res.status === 404) {
             failCount.current += 1;
             if (failCount.current >= 3) {
-              // Server state lost or job expired
               setLoading(false);
               setJobId(null);
-              alert("Investigation session lost (likely due to server restart). Please start the investigation again.");
+              alert("Investigation session lost. Please start the investigation again.");
               clearInterval(pollInterval);
             }
           }
           return;
         }
 
-        // Reset fail count on success
         failCount.current = 0;
-        
         const data = await res.json();
         setReport(data);
-        console.log("REPORT DATA SUCCESS:", data.job_id);
 
         if (data.status === "complete" || data.status === "error") {
           setLoading(false);
-          setJobId(null); // Stop polling
+          setJobId(null);
+          setActiveView("overview");
           clearInterval(pollInterval);
         }
       } catch (err) {
@@ -140,48 +185,52 @@ export default function Home() {
     };
 
     const pollInterval: NodeJS.Timeout = setInterval(poll, 2000);
-    poll(); // Initial call
+    poll();
 
     return () => clearInterval(pollInterval);
   }, [jobId]);
 
+  const discoveredLinks = useMemo(
+    () => Object.entries(report?.discovered_links ?? {}).filter(([key, value]) => value && key !== "website" && key !== "company_name"),
+    [report?.discovered_links]
+  );
+
+  const sourceCount = new Set(report?.raw_data_summary?.scraped_sources ?? []).size;
+  const hasReport = report?.status === "complete";
+  const riskToneClass = riskTone(report?.risk_level);
+
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
-        <div className="text-neutral-500">Loading...</div>
-      </div>
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
+        Loading...
+      </main>
     );
   }
-  
-  if (!user && !authLoading) {
-    return null;
-  }
 
-  const handleAnalyze = async (e: React.FormEvent) => {
-    e.preventDefault();
+  if (!user && !authLoading) return null;
+
+  const handleAnalyze = async (event: React.FormEvent) => {
+    event.preventDefault();
     setLoading(true);
     setReport(null);
-    setChatHistory([]);
-    setJobId(null); // Reset prev job
+    setJobId(null);
+    setActiveView("overview");
 
     try {
-      const startRes = await fetch("http://localhost:8000/api/investigate", {
+      const startRes = await fetch("/api/investigate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          url, 
-          linkedin_url: linkedin, 
+        body: JSON.stringify({
+          url,
+          linkedin_url: linkedin,
           gst_number: gst,
-          user_email: user?.email 
+          user_email: user?.email,
         }),
       });
       const data = await startRes.json();
-      
-      if (data.job_id) {
-        setJobId(data.job_id); // This triggers the useEffect polling
-      } else {
-        throw new Error("No job_id returned");
-      }
+
+      if (data.job_id) setJobId(data.job_id);
+      else throw new Error("No job_id returned");
     } catch (error) {
       console.error("Analysis initiation failed:", error);
       alert("Failed to start investigation.");
@@ -189,274 +238,292 @@ export default function Home() {
     }
   };
 
-  const handleChat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim() || !report) return;
-    
-    const newUserMsg = chatMessage;
-    setChatHistory(prev => [...prev, { role: "user", content: newUserMsg }]);
-    setChatMessage("");
-    setChatLoading(true);
-    
-    try {
-      const response = await fetch("http://localhost:8000/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: newUserMsg, job_id: report.job_id }),
-      });
-      const data = await response.json();
-      setChatHistory(prev => [...prev, { role: "assistant", content: data.response || data.reply }]);
-    } catch (error) {
-      setChatHistory(prev => [...prev, { role: "assistant", content: "Error connecting to AI." }]);
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-
-  const verdictColors: Record<string, string> = {
-    LEGITIMATE: "bg-green-500/20 text-green-400 border-green-500/30",
-    LIKELY_LEGITIMATE: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-    UNCERTAIN: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-    LIKELY_FRAUDULENT: "bg-orange-500/20 text-orange-400 border-orange-500/30",
-    FRAUDULENT: "bg-red-500/20 text-red-400 border-red-500/30",
-  };
-
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans">
-      <div className="max-w-7xl mx-auto px-6 py-12">
-        
-        <header className="mb-12">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-sm font-medium">
-              <ShieldAlert size={16} /> ShadowTrace AI
+    <main className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto flex min-h-screen max-w-[1600px] flex-col px-4 py-4 sm:px-6 lg:px-8">
+        <header className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/80 px-4 py-3 shadow-2xl shadow-black/20">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-400 text-slate-950">
+              <ShieldAlert size={21} />
             </div>
-            {user && (
-              <div className="flex items-center gap-3">
-                <img 
-                  src={user.image ?? ""} 
-                  className="w-8 h-8 rounded-full"
-                  alt="avatar"
-                />
-                <span className="text-sm text-neutral-400">{user.email}</span>
-                <button 
-                  onClick={signOut}
-                  className="text-xs text-neutral-600 hover:text-red-400 transition-colors"
-                >
-                  Sign out
-                </button>
-              </div>
-            )}
+            <div>
+              <p className="text-sm font-semibold text-slate-100">ShadowTrace AI</p>
+              <p className="text-xs text-slate-500">Digital due diligence command center</p>
+            </div>
           </div>
-          <h1 className="text-4xl font-bold tracking-tight mt-4">Digital Due Diligence</h1>
+
+          <div className="flex items-center gap-3">
+            {hasReport && (
+              <button
+                onClick={() => window.open(`/api/export/${report.job_id}`)}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400/50 hover:text-cyan-200"
+              >
+                <Download size={15} />
+                Export
+              </button>
+            )}
+            <div className="hidden items-center gap-2 sm:flex">
+              <div
+                className="h-8 w-8 rounded-full border border-slate-700 bg-slate-800 bg-cover bg-center"
+                style={{ backgroundImage: user?.image ? `url(${user.image})` : undefined }}
+                aria-label="User avatar"
+              />
+              <span className="max-w-[180px] truncate text-xs text-slate-400">{user?.email}</span>
+            </div>
+            <button
+              onClick={signOut}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-800 text-slate-400 transition hover:border-red-500/40 hover:text-red-300"
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
         </header>
 
-        <div className="grid lg:grid-cols-12 gap-8">
-          
-                    {/* Sidebar */}
-          <aside className="lg:col-span-4 space-y-6">
-            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
-              <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                <Search className="text-blue-400" size={18} /> New Investigation
-              </h2>
-              <form onSubmit={handleAnalyze} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase ml-1">Company Website</label>
-                  <input 
-                    type="url" required placeholder="https://company.com"
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-blue-500 text-sm"
-                    value={url} onChange={(e) => setUrl(e.target.value)}
-                  />
+        <div className="grid flex-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)_380px]">
+          <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+            <section className="rounded-lg border border-slate-800 bg-slate-900/80 p-4">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h1 className="text-lg font-semibold text-white">New investigation</h1>
+                  <p className="text-xs text-slate-500">Start with a domain. Add LinkedIn only if you have it.</p>
                 </div>
-                
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase ml-1">LinkedIn URL (Optional)</label>
-                  <input 
-                    type="url" placeholder="https://linkedin.com/company/..."
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-blue-500 text-sm"
-                    value={linkedin} onChange={(e) => setLinkedin(e.target.value)}
-                  />
-                </div>
+                <Search size={18} className="text-cyan-300" />
+              </div>
 
-                <button 
-                  type="submit" disabled={loading}
-                  className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold transition-all disabled:opacity-50 shadow-lg shadow-blue-500/10"
+              <form onSubmit={handleAnalyze} className="space-y-3">
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase text-slate-500">Company website</span>
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://company.com"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm outline-none transition placeholder:text-slate-600 focus:border-cyan-400"
+                    value={url}
+                    onChange={(event) => setUrl(event.target.value)}
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase text-slate-500">LinkedIn URL</span>
+                  <input
+                    type="url"
+                    placeholder="Optional"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm outline-none transition placeholder:text-slate-600 focus:border-cyan-400"
+                    value={linkedin}
+                    onChange={(event) => setLinkedin(event.target.value)}
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase text-slate-500">GST number</span>
+                  <input
+                    placeholder="Optional"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm outline-none transition placeholder:text-slate-600 focus:border-cyan-400"
+                    value={gst}
+                    onChange={(event) => setGst(event.target.value)}
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-400 px-4 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
                 >
-                  {loading ? "Discovering & Analyzing..." : "Start Investigation"}
+                  <Sparkles size={16} />
+                  {loading ? "Investigating..." : "Start investigation"}
                 </button>
               </form>
+            </section>
 
-              {/* Discovered Links Feedback */}
-              {report?.discovered_links && Object.values(report.discovered_links).some(v => v) && (
-                <div className="mt-6 pt-6 border-t border-neutral-800">
-                  <h3 className="text-[10px] font-bold text-neutral-500 uppercase mb-3 flex items-center gap-1">
-                    <Globe size={10} /> Discovered Links
-                  </h3>
-                  <div className="space-y-2">
-                    {Object.entries(report.discovered_links).map(([key, val]) => {
-                      if (!val || key === 'website') return null
-                      const icons: Record<string, string | null> = {
-                        linkedin: '💼', twitter: '🐦', github: '💻',
-                        crunchbase: '📊', company_name: null
-                      }
-                      if (key === 'company_name') return null
-                      return (
-                        <a
-                          key={key}
-                          href={val as string}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-between text-[11px] bg-neutral-950 border border-neutral-800 hover:border-blue-500/50 p-2 rounded-lg transition-all group"
-                        >
-                          <span className="text-neutral-400 capitalize flex items-center gap-1.5">
-                            <span>{icons[key] || '🔗'}</span> {key}
-                          </span>
-                          <span className="text-blue-400 text-[10px] group-hover:text-blue-300 truncate max-w-[110px]">
-                            {(val as string).replace('https://', '').replace('http://', '').slice(0, 25)}...
-                          </span>
-                        </a>
-                      )
-                    })}
-                  </div>
+            {hasReport && (
+              <section className="rounded-lg border border-slate-800 bg-slate-900/80 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-200">
+                  <Link2 size={16} className="text-cyan-300" />
+                  Discovered links
                 </div>
-              )}
-
-              {/* Scraped Sources */}
-              {report?.raw_data_summary?.scraped_sources && (
-                <div className="mt-4 pt-4 border-t border-neutral-800">
-                  <h3 className="text-[10px] font-bold text-neutral-500 uppercase mb-2">Sources Scraped</h3>
-                  <div className="flex flex-wrap gap-1">
-                    {Array.from(new Set(report.raw_data_summary.scraped_sources as string[])).map((src: string) => (
-                      <span key={src} className="text-[10px] px-2 py-0.5 bg-green-500/10 text-green-400 border border-green-500/20 rounded-full">
-                        ✓ {src}
-                      </span>
-                    ))}
-                  </div>
+                <div className="space-y-2">
+                  {discoveredLinks.length > 0 ? discoveredLinks.slice(0, 5).map(([key, value]) => (
+                    <a
+                      key={key}
+                      href={value as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-400 transition hover:border-cyan-400/40 hover:text-cyan-200"
+                    >
+                      <span className="capitalize">{key}</span>
+                      <span className="max-w-[160px] truncate text-slate-500">{String(value).replace(/^https?:\/\//, "")}</span>
+                    </a>
+                  )) : (
+                    <p className="text-xs text-slate-500">No external links found yet.</p>
+                  )}
                 </div>
-              )}
-
-              {/* Progress Steps */}
-              {report?.progress_steps && report.status !== 'complete' && (
-                <div className="mt-4 pt-4 border-t border-neutral-800 space-y-1">
-                  {(report.progress_steps as string[]).slice(-4).map((step: string, i: number) => (
-                    <div key={i} className="text-[10px] text-neutral-500 flex gap-1.5">
-                      <span className="text-blue-400 shrink-0">›</span>
-                      <span>{step}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            
-            {report?.status === "complete" && (
-              <button 
-                onClick={() => window.open(`http://localhost:8000/api/export/${report.job_id}`)}
-                className="w-full flex items-center justify-center gap-2 p-4 bg-neutral-900 border border-neutral-800 rounded-xl hover:bg-neutral-800 transition-all"
-              >
-                <Download size={18} /> Download PDF Report
-              </button>
+              </section>
             )}
           </aside>
 
-          {/* Main Section */}
-          <section className="lg:col-span-8 space-y-6">
-            {!jobId && !report && (
-              <div className="h-[400px] flex flex-col items-center justify-center border border-dashed border-neutral-800 rounded-3xl bg-neutral-900/20 text-neutral-500 text-center px-10">
-                <Globe size={48} className="mb-4 opacity-10" />
-                <p>Submit a company domain to start the autonomous investigation pipeline.</p>
+          <section className="min-w-0 space-y-4">
+            {!hasReport && !jobId && (
+              <div className="grid min-h-[calc(100vh-120px)] place-items-center rounded-lg border border-dashed border-slate-800 bg-slate-900/40 p-8 text-center">
+                <div className="max-w-md">
+                  <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-lg border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                    <Globe2 size={30} />
+                  </div>
+                  <h2 className="text-2xl font-semibold text-white">Investigate without the scroll maze</h2>
+                  <p className="mt-3 text-sm leading-6 text-slate-400">
+                    Run a company check and the most important verdict, risks, evidence, graph, and chat will stay within reach.
+                  </p>
+                </div>
               </div>
             )}
 
-            {jobId && (!report || report.status !== "complete") && (
-              <LoadingSkeleton steps={report?.steps} />
-            )}
+            {jobId && <ProgressPanel report={report} />}
 
-            <AnimatePresence>
-              {report?.status === "complete" && (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                  
-                                    {/* Verdict Badge */}
-                  {report.legitimacy_verdict && (
-                    <div className="flex items-center gap-3 mb-4">
-                      <span className="text-sm text-neutral-400 font-semibold uppercase">AI Verdict:</span>
-                      <span className={`px-4 py-1.5 rounded-full text-xs font-bold border ${verdictColors[report.legitimacy_verdict] || verdictColors.UNCERTAIN}`}>
-                        {report.legitimacy_verdict.replace(/_/g, " ")}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Score Breakdown Section */}
-                  <ScoreBreakdown
-                    score={report.trust_score}
-                    riskLevel={report.risk_level}
-                    breakdown={report.score_breakdown}
-                  />
-
-                  {/* Red Flags */}
-                  {(report.red_flags ?? []).length > 0 && (
-                    <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-6">
-                      <h3 className="text-red-400 text-xs font-bold uppercase mb-4 flex items-center gap-2">
-                        <AlertTriangle size={14} /> Red Flags Detected
-                      </h3>
-                      <div className="space-y-2">
-                        {(report.red_flags ?? []).map((f, i) => (
-                          <div key={i} className="text-sm text-red-200/70 flex gap-2">
-                            <span className="text-red-500">•</span> {f}
-                          </div>
-                        ))}
+            <AnimatePresence mode="wait">
+              {hasReport && (
+                <motion.div
+                  key="report"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-4"
+                >
+                  <section className="rounded-lg border border-slate-800 bg-slate-900/80 p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                          <span className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-[11px] font-semibold uppercase text-slate-400">
+                            {report.company_name || "Investigated company"}
+                          </span>
+                          {report.legitimacy_verdict && (
+                            <span className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold uppercase ${verdictStyles[report.legitimacy_verdict] ?? verdictStyles.UNCERTAIN}`}>
+                              {report.legitimacy_verdict.replace(/_/g, " ")}
+                            </span>
+                          )}
+                        </div>
+                        <h2 className="text-3xl font-semibold tracking-tight text-white">
+                          Trust score {report.trust_score}/100
+                        </h2>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+                          {report.ai_reasoning || "The report is ready. Review the score, contradictions, public signals, and ask the AI investigator follow-up questions."}
+                        </p>
                       </div>
-                    </div>
-                  )}
-
-                                    {/* Legitimacy Signals */}
-                  {(report.legitimacy_signals ?? []).length > 0 && (
-                    <div className="bg-green-500/5 border border-green-500/20 rounded-2xl p-6">
-                      <h3 className="text-green-400 text-xs font-bold uppercase mb-4 flex items-center gap-2">
-                        <CheckCircle size={14} /> Legitimacy Signals
-                      </h3>
-                      <div className="space-y-2">
-                        {(report.legitimacy_signals ?? []).map((s, i) => (
-                          <div key={i} className="text-sm text-green-200/70 flex gap-2">
-                            <span className="text-green-500">✓</span> {s}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ContradictionTable Component */}
-                  <ContradictionTable contradictions={report.contradictions} redFlags={report.red_flags} />
-
-                  {/* Reviews & Sentiment Panel */}
-                  <ReviewsPanel report={report} />
-
-                  {/* Bottom Analysis Section: Graph & Chat */}
-                  <div className="grid md:grid-cols-2 gap-6">
-                    {/* Knowledge Graph */}
-                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-xl h-[500px] flex flex-col">
-                      <h3 className="text-sm font-bold text-neutral-500 mb-4 uppercase flex items-center gap-2">
-                        < Globe size={16} /> Knowledge Graph
-                      </h3>
-                      <div className="flex-1 bg-neutral-950 rounded-xl border border-neutral-800 overflow-hidden relative">
-                        <GraphView 
-                          report={report}
-                        />
+                      <div className={`rounded-lg border px-4 py-3 text-center ${riskToneClass}`}>
+                        <div className="text-[10px] font-bold uppercase">Risk level</div>
+                        <div className="mt-1 text-2xl font-semibold">{report.risk_level}</div>
                       </div>
                     </div>
 
-                    {/* Chat Panel */}
-                    <ChatPanel
-                      jobId={report.job_id}
-                      companyName={report.company_name}
-                      trustScore={report.trust_score}
-                      riskLevel={report.risk_level}
-                    />
+                    <div className="mt-5 grid gap-3 sm:grid-cols-4">
+                      <StatCard label="Sources" value={sourceCount || "0"} />
+                      <StatCard label="Pages" value={report.raw_data_summary?.pages_scraped ?? "N/A"} />
+                      <StatCard label="Red flags" value={report.red_flags?.length ?? 0} tone={(report.red_flags?.length ?? 0) > 0 ? "bad" : "good"} />
+                      <StatCard label="Conflicts" value={report.contradictions?.length ?? 0} tone={(report.contradictions?.length ?? 0) > 0 ? "warn" : "good"} />
+                    </div>
+                  </section>
+
+                  <div className="flex gap-2 overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/80 p-1">
+                    {viewTabs.map(({ key, label, icon: Icon }) => (
+                      <button
+                        key={key}
+                        onClick={() => setActiveView(key)}
+                        className={`inline-flex min-w-fit flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition ${
+                          activeView === key
+                            ? "bg-cyan-400 text-slate-950"
+                            : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+                        }`}
+                      >
+                        <Icon size={16} />
+                        {label}
+                      </button>
+                    ))}
                   </div>
 
+                  {activeView === "overview" && (
+                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+                      <ScoreBreakdown score={report.trust_score} riskLevel={report.risk_level} breakdown={report.score_breakdown} />
+                      <div className="space-y-4">
+                        <section className="rounded-lg border border-red-500/15 bg-red-500/5 p-4">
+                          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-red-200">
+                            <AlertTriangle size={16} />
+                            Red flags
+                          </div>
+                          {(report.red_flags ?? []).length > 0 ? (
+                            <div className="space-y-2">
+                              {report.red_flags.slice(0, 5).map((flag, index) => (
+                                <p key={index} className="rounded-md bg-slate-950/60 p-2 text-xs leading-5 text-red-100/80">{flag}</p>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-400">No scoring red flags were detected.</p>
+                          )}
+                        </section>
+
+                        <section className="rounded-lg border border-emerald-500/15 bg-emerald-500/5 p-4">
+                          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-emerald-200">
+                            <CheckCircle2 size={16} />
+                            Legitimacy signals
+                          </div>
+                          {(report.legitimacy_signals ?? []).length > 0 ? (
+                            <div className="space-y-2">
+                              {report.legitimacy_signals?.slice(0, 5).map((signal, index) => (
+                                <p key={index} className="rounded-md bg-slate-950/60 p-2 text-xs leading-5 text-emerald-100/80">{signal}</p>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-400">No explicit positive signals were returned.</p>
+                          )}
+                        </section>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeView === "evidence" && (
+                    <div className="space-y-4">
+                      <ContradictionTable contradictions={report.contradictions} redFlags={report.red_flags} />
+                      <ReviewsPanel report={report} />
+                    </div>
+                  )}
+
+                  {activeView === "graph" && (
+                    <section className="h-[620px] rounded-lg border border-slate-800 bg-slate-900/80 p-4">
+                      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-200">
+                        <Network size={16} className="text-cyan-300" />
+                        Knowledge graph
+                      </div>
+                      <div className="h-[550px] overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+                        <GraphView report={report} />
+                      </div>
+                    </section>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
           </section>
+
+          <aside className="lg:sticky lg:top-4 lg:h-[calc(100vh-96px)]">
+            <section className="flex h-full min-h-[560px] flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-900/90 shadow-2xl shadow-black/30">
+              {hasReport ? (
+                <ChatPanel
+                  jobId={report.job_id}
+                  companyName={report.company_name}
+                  trustScore={report.trust_score}
+                  riskLevel={report.risk_level}
+                />
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                    <Bot size={28} />
+                  </div>
+                  <h2 className="text-lg font-semibold text-white">AI investigator</h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Once an investigation finishes, the chatbot stays here so users can question the report immediately.
+                  </p>
+                </div>
+              )}
+            </section>
+          </aside>
         </div>
       </div>
     </main>

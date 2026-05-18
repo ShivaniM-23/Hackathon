@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!
 const REDIRECT_URI = "http://localhost:3000/api/google-auth/callback"
 
 export async function GET(req: NextRequest) {

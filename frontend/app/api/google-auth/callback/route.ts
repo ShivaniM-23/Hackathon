@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
     })
     return res
 
-  } catch (error) {
+  } catch {
     return NextResponse.redirect("http://localhost:3000/login?error=auth_failed")
   }
 }

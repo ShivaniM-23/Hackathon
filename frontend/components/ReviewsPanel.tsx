@@ -8,6 +8,7 @@ interface ReviewsPanelProps {
     raw_data_summary?: {
       reviews?: unknown;
       discovered_links?: Record<string, string | null>;
+      extended_sources?: Record<string, ExtendedSource>;
     };
     reviews?: unknown;
     discovered_links?: Record<string, string | null>;
@@ -37,6 +38,12 @@ interface Reviews {
     negative?: number;
     positive?: number;
   };
+}
+
+interface ExtendedSource {
+  found?: boolean;
+  count?: number;
+  rating?: number;
 }
 
 const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
@@ -145,9 +152,9 @@ const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
         </h3>
         
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {Object.entries(report?.raw_data_summary?.extended_sources || {}).map(([key, data]: [string, any]) => {
-            const isFraud = key === "fraud_signals" && data.count > 3;
-            const isFound = data.found || (data.count > 0 && key !== "fraud_signals") || data.rating;
+          {Object.entries((report?.raw_data_summary?.extended_sources || {}) as Record<string, ExtendedSource>).map(([key, data]) => {
+            const isFraud = key === "fraud_signals" && (data.count ?? 0) > 3;
+            const isFound = data.found || ((data.count ?? 0) > 0 && key !== "fraud_signals") || data.rating;
             const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
             
             return (
@@ -168,7 +175,7 @@ const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
                 {data.rating && (
                   <span className="text-[10px] font-mono">{data.rating}/5</span>
                 )}
-                {key === "fraud_signals" && data.count > 0 && (
+                {key === "fraud_signals" && (data.count ?? 0) > 0 && (
                   <span className="text-[10px] font-mono">{data.count} flags</span>
                 )}
               </div>

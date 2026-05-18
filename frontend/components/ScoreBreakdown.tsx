@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useState } from "react";
 
 interface Factor {
@@ -15,114 +16,94 @@ interface Props {
 }
 
 const FACTOR_LABELS: Record<string, string> = {
-  domain_age: "Domain age vs founding year",
-  employee_consistency: "Employee count consistency",
-  social_presence: "Social media presence",
+  domain_age: "Domain age",
+  employee_consistency: "Employees",
+  social_presence: "Social presence",
   news_coverage: "News coverage",
-  address_verification: "Address verification",
-  review_sentiment: "Review sentiment",
-  client_verification: "Client claim verification",
-  document_integrity: "Document integrity",
-  digital_footprint: "Digital footprint depth",
+  address_verification: "Address",
+  review_sentiment: "Reviews",
+  client_verification: "Clients",
+  document_integrity: "Documents",
+  digital_footprint: "Footprint",
+  extended_presence: "Extended presence",
 };
 
-const RISK_COLORS = {
-  LOW:    { text: "#1D9E75", bg: "#E1F5EE", bar: "#1D9E75" },
-  MEDIUM: { text: "#BA7517", bg: "#FAEEDA", bar: "#EF9F27" },
-  HIGH:   { text: "#A32D2D", bg: "#FCEBEB", bar: "#E24B4A" },
-};
+function getBarColor(pct: number, isFlag: boolean) {
+  if (isFlag) return "bg-red-400";
+  if (pct >= 70) return "bg-emerald-400";
+  if (pct >= 40) return "bg-amber-400";
+  return "bg-red-400";
+}
 
-function getBarColor(pct: number) {
-  if (pct >= 70) return "#1D9E75";
-  if (pct >= 40) return "#EF9F27";
-  return "#E24B4A";
+function riskStyle(risk: string) {
+  if (risk === "LOW") return "text-emerald-300 border-emerald-500/20 bg-emerald-500/10";
+  if (risk === "HIGH") return "text-red-300 border-red-500/20 bg-red-500/10";
+  return "text-amber-300 border-amber-500/20 bg-amber-500/10";
 }
 
 export default function ScoreBreakdown({ breakdown, score, riskLevel }: Props) {
   const [animated, setAnimated] = useState(false);
-  const risk = RISK_COLORS[riskLevel as keyof typeof RISK_COLORS] || RISK_COLORS.MEDIUM;
 
   useEffect(() => {
-    const t = setTimeout(() => setAnimated(true), 100);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setAnimated(true), 80);
+    return () => clearTimeout(timer);
   }, []);
 
   const factors = Object.entries(breakdown || {});
-  const maxPts = factors.reduce((a, [, v]) => a + (v?.max || 0), 0);
+  const redFlagCount = factors.filter(([, value]) => value?.is_red_flag).length;
 
   return (
-    <div style={{ background: "var(--bg, #111)", borderRadius: 12, padding: "1.25rem", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+    <section className="rounded-lg border border-slate-800 bg-slate-900/80 p-5">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>trust score</div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-            <span style={{ fontSize: 42, fontWeight: 500, color: risk.text, lineHeight: 1 }}>{score}</span>
-            <span style={{ fontSize: 18, color: "#666" }}>/100</span>
+          <p className="text-[11px] font-semibold uppercase text-slate-500">Trust score</p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-5xl font-semibold tracking-tight text-white">{score}</span>
+            <span className="text-lg text-slate-500">/100</span>
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <span style={{ background: risk.bg, color: risk.text, fontSize: 12, fontWeight: 500, padding: "4px 12px", borderRadius: 20 }}>
-            {riskLevel} RISK
+        <div className="text-right">
+          <span className={`inline-flex rounded-lg border px-3 py-1.5 text-xs font-bold uppercase ${riskStyle(riskLevel)}`}>
+            {riskLevel} risk
           </span>
-          <div style={{ fontSize: 11, color: "#666", marginTop: 8 }}>
-            {factors.filter(([, v]) => v?.is_red_flag).length} red flag{factors.filter(([, v]) => v?.is_red_flag).length !== 1 ? "s" : ""}
-          </div>
+          <p className="mt-2 text-xs text-slate-500">{redFlagCount} scored flag{redFlagCount === 1 ? "" : "s"}</p>
         </div>
       </div>
 
-      {/* Risk range legend */}
-      <div style={{ display: "flex", gap: 16, marginBottom: "1rem", fontSize: 11 }}>
-        <span style={{ color: "#A32D2D" }}>0–39 HIGH</span>
-        <span style={{ color: "#BA7517" }}>40–69 MEDIUM</span>
-        <span style={{ color: "#1D9E75" }}>70–100 LOW</span>
-      </div>
-
-      {/* Factor bars */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {factors.map(([key, val]) => {
-          if (!val) return null;
-          const pct = val.max > 0 ? Math.round((val.score / val.max) * 100) : 0;
-          const barColor = val.is_red_flag ? "#E24B4A" : getBarColor(pct);
+      <div className="grid gap-3 md:grid-cols-2">
+        {factors.map(([key, value]) => {
+          if (!value) return null;
+          const pct = value.max > 0 ? Math.round((value.score / value.max) * 100) : 0;
           const label = FACTOR_LABELS[key] || key.replace(/_/g, " ");
 
           return (
-            <div key={key}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  {val.is_red_flag && (
-                    <span style={{ fontSize: 10, background: "#FCEBEB", color: "#A32D2D", padding: "1px 6px", borderRadius: 10 }}>flag</span>
-                  )}
-                  <span style={{ fontSize: 12, color: "#aaa" }}>{label}</span>
+            <div key={key} className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {value.is_red_flag && (
+                      <span className="rounded-md border border-red-500/20 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-300">
+                        flag
+                      </span>
+                    )}
+                    <p className="truncate text-xs font-semibold text-slate-200">{label}</p>
+                  </div>
                 </div>
-                <span style={{ fontSize: 12, fontWeight: 500, color: barColor }}>
-                  {val.score}/{val.max}
+                <span className="shrink-0 text-xs font-semibold text-slate-400">
+                  {value.score}/{value.max}
                 </span>
               </div>
-              <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3, overflow: "hidden" }}>
-                <div style={{
-                  height: "100%",
-                  borderRadius: 3,
-                  background: barColor,
-                  width: animated ? `${pct}%` : "0%",
-                  transition: "width 0.6s cubic-bezier(0.4,0,0.2,1)",
-                }} />
+              <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${getBarColor(pct, value.is_red_flag)}`}
+                  style={{ width: animated ? `${pct}%` : "0%" }}
+                />
               </div>
-              {val.reason && (
-                <div style={{ fontSize: 11, color: "#666", marginTop: 3 }}>{val.reason}</div>
-              )}
+              {value.reason && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-slate-500">{value.reason}</p>}
             </div>
           );
         })}
       </div>
-
-      {/* Contradiction penalty note */}
-      <div style={{ marginTop: "1rem", padding: "0.75rem", background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "0.5px solid rgba(255,255,255,0.06)" }}>
-        <div style={{ fontSize: 11, color: "#666" }}>
-          Contradiction penalty: up to −20pts deducted from raw total based on confirmed mismatches.
-          Raw total: {factors.reduce((a, [, v]) => a + (v?.score || 0), 0)}/100 → Final: {score}/100
-        </div>
-      </div>
-    </div>
+    </section>
   );
 }
