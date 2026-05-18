@@ -9,7 +9,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Search, ShieldAlert, CheckCircle, AlertTriangle,
   XCircle, ArrowRight, MessageSquare, Send,
-  FileText, Activity, Globe, Info, Download, Mail
+  FileText, Activity, Globe, Info, Download, Mail, Volume2, VolumeX,
+  BarChart3, TrendingDown, TrendingUp, Clock
 } from "lucide-react";
 import GraphView from "../components/GraphView";
 import ContradictionTable from "../components/ContradictionTable";
@@ -96,6 +97,86 @@ export default function Home() {
   const [chatMessage, setChatMessage] = useState("");
   const [chatHistory, setChatHistory] = useState<{ role: string, content: string }[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
+
+  // Dashboard stats
+  interface DashStat {
+    job_id: string;
+    company_name: string;
+    trust_score: number;
+    risk_level: string;
+    legitimacy_verdict: string;
+    red_flags_count: number;
+  }
+  const [dashStats, setDashStats] = useState<DashStat[]>([]);
+  const [statsLoaded, setStatsLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!jobId && !report) {
+      fetch(`${API_URL}/api/history`)
+        .then(r => r.json())
+        .then(data => { setDashStats(data); setStatsLoaded(true); })
+        .catch(() => setStatsLoaded(true));
+    }
+  }, [jobId, report]);
+
+  // Voice briefing state
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const speakBriefing = () => {
+    if (!report || report.status !== "complete") return;
+
+    // Toggle off if already speaking
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+
+    const score = report.trust_score ?? 0;
+    const risk = report.risk_level ?? "unknown";
+    const name = report.company_name ?? "this company";
+    const flags = report.red_flags ?? [];
+    const contradictions = report.contradictions ?? [];
+    const signals = report.legitimacy_signals ?? [];
+    const verdict = (report.legitimacy_verdict ?? "uncertain").replace(/_/g, " ").toLowerCase();
+
+    let script = `Shadow Trace AI has completed its investigation of ${name}. `;
+    script += `The company received a trust score of ${score} out of 100, classified as ${risk.replace(/_/g, " ").toLowerCase()} risk. `;
+    script += `Our verdict: ${verdict}. `;
+
+    if (flags.length > 0) {
+      script += `We detected ${flags.length} red flag${flags.length > 1 ? "s" : ""}. `;
+      script += `The top concern is: ${flags[0]}. `;
+    } else {
+      script += `No major red flags were identified. `;
+    }
+
+    if (contradictions.length > 0) {
+      script += `${contradictions.length} contradiction${contradictions.length > 1 ? "s were" : " was"} found between the company's claims and our evidence. `;
+    }
+
+    if (signals.length > 0) {
+      script += `On the positive side, ${signals[0].toLowerCase()}. `;
+    }
+
+    script += `This concludes the Shadow Trace AI executive briefing.`;
+
+    const utterance = new SpeechSynthesisUtterance(script);
+    utterance.rate = 0.95;
+    utterance.pitch = 1.0;
+
+    // Try to pick a good English voice
+    const voices = window.speechSynthesis.getVoices();
+    const preferred = voices.find(v => v.name.includes("Google") && v.lang.startsWith("en")) ||
+                      voices.find(v => v.lang.startsWith("en"));
+    if (preferred) utterance.voice = preferred;
+
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
 
   // --- Polling Logic (Fix for Bug 2 & Persistence Support) ---
   const failCount = useRef(0);
@@ -312,6 +393,14 @@ export default function Home() {
                 >
                   <Activity size={16} /> Multi-Vendor Comparison
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => window.location.href = '/history'}
+                  className="w-full bg-neutral-950 border border-neutral-800 hover:bg-neutral-800 py-3 rounded-xl font-bold text-neutral-400 hover:text-white transition-all flex items-center justify-center gap-2"
+                >
+                  <FileText size={16} /> Investigation History
+                </button>
               </form>
 
               {/* Discovered Links Feedback */}
@@ -377,21 +466,133 @@ export default function Home() {
             </div>
 
             {report?.status === "complete" && (
-              <button
-                onClick={() => window.open(`${API_URL}/api/export/${report.job_id}`)}
-                className="w-full flex items-center justify-center gap-2 p-4 bg-neutral-900 border border-neutral-800 rounded-xl hover:bg-neutral-800 transition-all"
-              >
-                <Download size={18} /> Download PDF Report
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={() => window.open(`${API_URL}/api/export/${report.job_id}`)}
+                  className="w-full flex items-center justify-center gap-2 p-4 bg-neutral-900 border border-neutral-800 rounded-xl hover:bg-neutral-800 transition-all"
+                >
+                  <Download size={18} /> Download PDF Report
+                </button>
+                <button
+                  onClick={speakBriefing}
+                  className={`w-full flex items-center justify-center gap-2 p-4 rounded-xl font-semibold transition-all border ${
+                    isSpeaking
+                      ? "bg-blue-600/20 border-blue-500/40 text-blue-400 hover:bg-blue-600/30"
+                      : "bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                  }`}
+                >
+                  {isSpeaking ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                  {isSpeaking ? "Stop Briefing" : "Voice AI Briefing"}
+                </button>
+              </div>
             )}
           </aside>
 
           {/* Main Section */}
           <section className="lg:col-span-8 space-y-6">
             {!jobId && !report && (
-              <div className="h-[400px] flex flex-col items-center justify-center border border-dashed border-neutral-800 rounded-3xl bg-neutral-900/20 text-neutral-500 text-center px-10">
-                <Globe size={48} className="mb-4 opacity-10" />
-                <p>Submit a company domain to start the autonomous investigation pipeline.</p>
+              <div className="space-y-6">
+                {/* Stats Cards */}
+                {statsLoaded && dashStats.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
+                        <BarChart3 className="mx-auto text-blue-500 mb-2" size={24} />
+                        <div className="text-3xl font-black text-white">{dashStats.length}</div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1 font-semibold">Investigations</div>
+                      </div>
+                      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
+                        <TrendingUp className="mx-auto text-green-500 mb-2" size={24} />
+                        <div className={`text-3xl font-black ${
+                          (dashStats.reduce((s, h) => s + h.trust_score, 0) / dashStats.length) >= 55 ? 'text-green-400' : 'text-yellow-400'
+                        }`}>
+                          {Math.round(dashStats.reduce((s, h) => s + h.trust_score, 0) / dashStats.length)}
+                        </div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1 font-semibold">Avg Score</div>
+                      </div>
+                      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
+                        <AlertTriangle className="mx-auto text-red-500 mb-2" size={24} />
+                        <div className="text-3xl font-black text-red-400">
+                          {dashStats.filter(h => h.risk_level.includes('HIGH')).length}
+                        </div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1 font-semibold">High Risk</div>
+                      </div>
+                      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
+                        <CheckCircle className="mx-auto text-emerald-500 mb-2" size={24} />
+                        <div className="text-3xl font-black text-emerald-400">
+                          {dashStats.filter(h => h.trust_score >= 75).length}
+                        </div>
+                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1 font-semibold">Trusted</div>
+                      </div>
+                    </div>
+
+                    {/* Highest Risk Company */}
+                    {(() => {
+                      const riskiest = dashStats.reduce((a, b) => a.trust_score < b.trust_score ? a : b);
+                      return (
+                        <div className="bg-gradient-to-r from-red-950/30 to-neutral-900 border border-red-900/30 rounded-2xl p-5">
+                          <div className="flex items-center gap-3 mb-2">
+                            <TrendingDown className="text-red-500" size={18} />
+                            <span className="text-xs font-bold text-red-400 uppercase tracking-wider">Highest Risk Detected</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h4 className="text-lg font-bold text-white">{riskiest.company_name}</h4>
+                              <span className="text-xs text-neutral-500">{riskiest.red_flags_count} red flags • {riskiest.risk_level.replace(/_/g, ' ')}</span>
+                            </div>
+                            <div className="text-3xl font-black text-red-400">{riskiest.trust_score}<span className="text-sm text-neutral-600">/100</span></div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Recent Investigations */}
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
+                      <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <Clock size={14} /> Recent Investigations
+                      </h3>
+                      <div className="space-y-2">
+                        {dashStats.slice(0, 5).map((h) => (
+                          <div
+                            key={h.job_id}
+                            className="flex items-center justify-between p-3 bg-neutral-950 rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
+                            onClick={() => {
+                              localStorage.setItem('investigate_url', '');
+                              localStorage.setItem('investigate_job_id', h.job_id);
+                              window.location.reload();
+                            }}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`w-2 h-2 rounded-full ${
+                                h.trust_score >= 75 ? 'bg-green-500' :
+                                h.trust_score >= 55 ? 'bg-yellow-500' :
+                                h.trust_score >= 30 ? 'bg-orange-500' : 'bg-red-500'
+                              }`} />
+                              <span className="font-semibold text-sm text-neutral-200">{h.company_name}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                h.risk_level.includes('HIGH') ? 'bg-red-500/10 text-red-400' :
+                                h.risk_level.includes('MEDIUM') ? 'bg-yellow-500/10 text-yellow-400' :
+                                'bg-green-500/10 text-green-400'
+                              }`}>{h.risk_level.replace(/_/g, ' ')}</span>
+                              <span className={`text-sm font-black ${
+                                h.trust_score >= 75 ? 'text-green-400' :
+                                h.trust_score >= 55 ? 'text-yellow-400' :
+                                h.trust_score >= 30 ? 'text-orange-400' : 'text-red-400'
+                              }`}>{h.trust_score}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="h-[400px] flex flex-col items-center justify-center border border-dashed border-neutral-800 rounded-3xl bg-neutral-900/20 text-neutral-500 text-center px-10">
+                    <Globe size={48} className="mb-4 opacity-10" />
+                    <p>Submit a company domain to start the autonomous investigation pipeline.</p>
+                  </div>
+                )}
               </div>
             )}
 

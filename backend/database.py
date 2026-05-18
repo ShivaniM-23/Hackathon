@@ -151,6 +151,26 @@ async def get_investigation(job_id: str) -> Optional[dict]:
             logger.error(f"PostgreSQL read error: {e}")
     return None
 
+
+async def get_all_investigations() -> dict:
+    """Returns all investigations from file store and PostgreSQL."""
+    all_reports = {}
+
+    # 1. File Store
+    all_reports.update(_load_store_file(JOB_STORE_FILE))
+
+    # 2. PostgreSQL (merge in any that aren't in file store)
+    if _pg_pool:
+        try:
+            rows = await _pg_pool.fetch("SELECT job_id, report FROM investigations")
+            for row in rows:
+                if row["job_id"] not in all_reports:
+                    all_reports[row["job_id"]] = json.loads(row["report"])
+        except Exception as e:
+            logger.error(f"PostgreSQL read all error: {e}")
+
+    return all_reports
+
 async def update_investigation_status(job_id: str, status: str):
     """Quick status update helper."""
     report = await get_investigation(job_id)

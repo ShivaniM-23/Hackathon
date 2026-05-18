@@ -23,6 +23,7 @@ from guardrails import apply_guardrails, GuardrailResult
 from database import (
     save_investigation,
     get_investigation,
+    get_all_investigations,
     save_graph_data,
     get_graph_data,
     init_db,
@@ -330,3 +331,27 @@ async def export_pdf(job_id: str):
         raise HTTPException(404, "Report not ready")
     path = await generate_pdf_report(report)
     return FileResponse(path, filename=f"report_{job_id}.pdf")
+
+
+@app.get("/api/history")
+async def get_history():
+    """Returns lightweight summaries of all completed investigations for the history dashboard."""
+    all_reports = await get_all_investigations()
+    history = []
+    for job_id, report in all_reports.items():
+        if report.get("status") != "complete":
+            continue
+        history.append({
+            "job_id": job_id,
+            "company_name": report.get("company_name", "Unknown"),
+            "url": report.get("url", ""),
+            "trust_score": report.get("trust_score", 0),
+            "risk_level": report.get("risk_level", "UNKNOWN"),
+            "legitimacy_verdict": report.get("legitimacy_verdict", "UNCERTAIN"),
+            "red_flags_count": len(report.get("red_flags", [])),
+            "contradictions_count": len(report.get("contradictions", [])),
+            "tier": report.get("tier"),
+        })
+    # Sort by trust score ascending (most risky first)
+    history.sort(key=lambda x: x.get("trust_score", 0))
+    return history
