@@ -1,5 +1,5 @@
 "use client"
-import { useSyncExternalStore } from "react"
+import { useSyncExternalStore, useState, useEffect } from "react"
 
 interface User {
   name: string
@@ -39,8 +39,14 @@ function readUserCookie(): User | null {
 }
 
 export function useUser() {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const user = useSyncExternalStore(subscribe, readUserCookie, () => null)
-  const loading = false
+  const loading = !mounted
 
   const signIn = () => {
     window.location.href = "/api/google-auth?action=login"
