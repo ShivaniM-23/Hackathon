@@ -121,6 +121,26 @@ async def save_investigation(job_id: str, report: dict):
     """Saves report to persistent file fallback and PostgreSQL."""
     # 1. File Store
     store = _load_store_file(JOB_STORE_FILE)
+    
+    # User-scoped write-time deduplication for completed reports
+    if report.get("status") == "complete":
+        from cache import normalize_url
+        user_email = report.get("user_email")
+        url = report.get("url", "")
+        if url:
+            norm_url = normalize_url(url)
+            for old_id, old_rep in list(store.items()):
+                if old_id != job_id and old_rep.get("status") == "complete" and old_rep.get("user_email") == user_email:
+                    old_url = old_rep.get("url", "")
+                    if old_url and normalize_url(old_url) == norm_url:
+                        logger.info(f"🗑️  Deduplicated old report {old_id} for URL {norm_url} and user {user_email}")
+                        store.pop(old_id, None)
+                        if _pg_pool:
+                            try:
+                                await _pg_pool.execute("DELETE FROM investigations WHERE job_id = $1", old_id)
+                            except Exception as e:
+                                logger.error(f"PostgreSQL delete deduplication error: {e}")
+
     store[job_id] = report
     _save_store_file(JOB_STORE_FILE, store)
 

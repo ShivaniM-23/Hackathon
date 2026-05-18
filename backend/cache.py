@@ -55,15 +55,16 @@ def normalize_url(url: str) -> str:
     return url.rstrip("/")
 
 
-def _cache_key(url: str) -> str:
-    return f"shadowtrace:investigation:{normalize_url(url)}"
+def _cache_key(url: str, user_email: Optional[str] = None) -> str:
+    user_part = f"{user_email}:" if user_email else ""
+    return f"shadowtrace:{user_part}investigation:{normalize_url(url)}"
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def get_cached(url: str) -> Optional[dict]:
+async def get_cached(url: str, user_email: Optional[str] = None) -> Optional[dict]:
     """Return a cached completed investigation for *url*, or None."""
-    key = _cache_key(url)
+    key = _cache_key(url, user_email)
 
     if _redis:
         try:
@@ -82,9 +83,9 @@ async def get_cached(url: str) -> Optional[dict]:
     return None
 
 
-async def set_cached(url: str, report: dict) -> None:
+async def set_cached(url: str, report: dict, user_email: Optional[str] = None) -> None:
     """Store a completed investigation in the cache."""
-    key = _cache_key(url)
+    key = _cache_key(url, user_email)
     value = json.dumps(report)
 
     if _redis:
@@ -99,9 +100,9 @@ async def set_cached(url: str, report: dict) -> None:
         logger.info(f"💾 Local cached     → {key}")
 
 
-async def invalidate(url: str) -> None:
+async def invalidate(url: str, user_email: Optional[str] = None) -> None:
     """Remove the cached entry for a URL (used by force_refresh)."""
-    key = _cache_key(url)
+    key = _cache_key(url, user_email)
     if _redis:
         try:
             await _redis.delete(key)

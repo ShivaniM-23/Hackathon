@@ -3,6 +3,8 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useUser } from "../hooks/useUser";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldAlert, GitCompare, Plus, Trash2, ArrowLeft,
@@ -29,10 +31,18 @@ interface CompareReport {
 }
 
 export default function ComparePage() {
+  const { user, loading: authLoading } = useUser();
+  const router = useRouter();
   const [urls, setUrls] = useState<string[]>(["", ""]);
   const [isComparing, setIsComparing] = useState(false);
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [reports, setReports] = useState<CompareReport[]>([]);
+
+  useEffect(() => {
+    if (!user && !authLoading) {
+      router.push("/login");
+    }
+  }, [user, authLoading, router]);
 
   const addUrl = () => {
     if (urls.length < 3) setUrls([...urls, ""]);
@@ -65,7 +75,7 @@ export default function ComparePage() {
         const res = await fetch(`${API_URL}/api/investigate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, force_new: false })
+          body: JSON.stringify({ url, force_refresh: false, user_email: user?.email })
         });
         const data = await res.json();
         ids.push(data.job_id);
@@ -130,7 +140,7 @@ export default function ComparePage() {
   const colors = ["#3b82f6", "#ef4444", "#10b981"]; // Blue, Red, Green
 
   return (
-    <div className="min-h-screen bg-black text-white p-6 md:p-12 font-sans selection:bg-blue-500/30">
+    <div className="min-h-screen bg-black text-white p-4 sm:p-6 md:p-12 font-sans selection:bg-blue-500/30">
       <div className="max-w-7xl mx-auto space-y-8">
 
         {/* Header */}
@@ -140,7 +150,7 @@ export default function ComparePage() {
               <ArrowLeft size={20} />
             </button>
             <div>
-              <h1 className="text-3xl font-black tracking-tight flex items-center gap-3">
+              <h1 className="text-xl sm:text-3xl font-black tracking-tight flex items-center gap-3">
                 <GitCompare className="text-blue-500" /> Multi-Vendor Comparison
               </h1>
               <p className="text-neutral-400 mt-1">Procurement Due Diligence Simulator</p>
@@ -149,7 +159,7 @@ export default function ComparePage() {
         </div>
 
         {/* Input Section */}
-        <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-2xl shadow-2xl">
+        <div className="bg-neutral-900 border border-neutral-800 p-4 sm:p-6 rounded-2xl shadow-2xl">
           <h3 className="text-sm font-bold text-neutral-400 mb-4 uppercase">Enter Vendor URLs</h3>
           <div className="flex flex-col md:flex-row gap-4 mb-4">
             {urls.map((url, i) => (
@@ -192,7 +202,7 @@ export default function ComparePage() {
 
         {/* Loading State */}
         {isComparing && (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {reports.map((report, i) => (
               <div key={i} className="bg-neutral-900 border border-neutral-800 p-6 rounded-2xl animate-pulse">
                 <div className="flex items-center gap-3 mb-4">
@@ -215,7 +225,7 @@ export default function ComparePage() {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
 
               {/* Factor Comparison Panel */}
-              <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 flex flex-col md:flex-row items-center gap-8 shadow-2xl">
+              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl sm:rounded-3xl p-4 sm:p-8 flex flex-col md:flex-row items-stretch gap-4 sm:gap-8 shadow-2xl">
                 <div className="flex-1 w-full space-y-4">
                   <div className="flex flex-wrap gap-3">
                     {reports.map((report, index) => (
@@ -281,9 +291,9 @@ export default function ComparePage() {
               </div>
 
               {/* Side-by-side Red Flags & Signals */}
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                 {reports.map((r, i) => (
-                  <div key={i} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 flex flex-col h-full">
+                  <div key={i} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 sm:p-6 flex flex-col h-full">
                     <h4 className="font-bold text-xl mb-6 flex items-center gap-2 border-b border-neutral-800 pb-4" style={{ color: colors[i] }}>
                       Vendor {i + 1}: {r.company_name}
                     </h4>

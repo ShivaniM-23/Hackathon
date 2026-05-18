@@ -53,12 +53,12 @@ export default function ScoreBreakdown({ breakdown, score, riskLevel }: Props) {
   const redFlagCount = factors.filter(([, value]) => value?.is_red_flag).length;
 
   return (
-    <section className="rounded-lg border border-slate-800 bg-[#0b1224]/95 p-5 shadow-xl shadow-black/20">
+    <section className="rounded-lg border border-slate-800 bg-[#0b1224]/95 p-4 sm:p-5 shadow-xl shadow-black/20">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Trust score</p>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-5xl font-semibold tracking-tight text-white">{score}</span>
+            <span className="text-4xl sm:text-5xl font-semibold tracking-tight text-white">{score}</span>
             <span className="text-lg text-slate-500">/100</span>
           </div>
         </div>
@@ -70,7 +70,7 @@ export default function ScoreBreakdown({ breakdown, score, riskLevel }: Props) {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2">
         {factors.map(([key, value]) => {
           if (!value) return null;
           const pct = value.max > 0 ? Math.round((value.score / value.max) * 100) : 0;

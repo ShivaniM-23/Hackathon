@@ -3,6 +3,8 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useUser } from "../hooks/useUser";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Clock, Search, AlertTriangle,
@@ -51,15 +53,25 @@ function getScoreRing(score: number): string {
 }
 
 export default function HistoryPage() {
+  const { user, loading: authLoading } = useUser();
+  const router = useRouter();
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterRisk, setFilterRisk] = useState<string>("ALL");
 
+  useEffect(() => {
+    if (!user && !authLoading) {
+      router.push("/login");
+    }
+  }, [user, authLoading, router]);
+
   const fetchHistory = useCallback(async () => {
+    if (!user) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/history`);
+      const emailParam = user.email ? `?user_email=${encodeURIComponent(user.email)}` : "";
+      const res = await fetch(`${API_URL}/api/history${emailParam}`);
       const data = await res.json();
       setHistory(data);
     } catch (error) {
@@ -67,14 +79,15 @@ export default function HistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
+    if (authLoading || !user) return;
     const timer = window.setTimeout(() => {
       fetchHistory();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [fetchHistory]);
+  }, [fetchHistory, user, authLoading]);
 
   const filtered = history.filter((entry) => {
     const matchesSearch =
@@ -93,7 +106,7 @@ export default function HistoryPage() {
     : 0;
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans p-6 md:p-12">
+    <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans p-4 sm:p-6 md:p-12">
       <div className="max-w-6xl mx-auto">
 
         {/* Header */}
@@ -104,7 +117,7 @@ export default function HistoryPage() {
           >
             <ArrowLeft size={16} /> Back to Dashboard
           </button>
-          <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-3">
+          <h1 className="text-xl sm:text-3xl font-bold tracking-tight text-white flex items-center gap-3">
             <Clock className="text-blue-500" /> Investigation History
           </h1>
           <p className="text-neutral-400 mt-2">
@@ -113,17 +126,17 @@ export default function HistoryPage() {
         </header>
 
         {/* Stats Bar */}
-        <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
-            <div className="text-3xl font-black text-white">{totalInvestigations}</div>
+            <div className="text-2xl sm:text-3xl font-black text-white">{totalInvestigations}</div>
             <div className="text-xs text-neutral-500 uppercase tracking-wider mt-1 font-semibold">Investigations</div>
           </div>
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
-            <div className={`text-3xl font-black ${getScoreColor(avgScore)}`}>{avgScore}/100</div>
+            <div className={`text-2xl sm:text-3xl font-black ${getScoreColor(avgScore)}`}>{avgScore}/100</div>
             <div className="text-xs text-neutral-500 uppercase tracking-wider mt-1 font-semibold">Avg Score</div>
           </div>
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
-            <div className="text-3xl font-black text-red-400">{highRisk}</div>
+            <div className="text-2xl sm:text-3xl font-black text-red-400">{highRisk}</div>
             <div className="text-xs text-neutral-500 uppercase tracking-wider mt-1 font-semibold">High Risk</div>
           </div>
         </div>
@@ -201,43 +214,47 @@ export default function HistoryPage() {
                       window.location.href = `/?job_id=${encodeURIComponent(entry.job_id)}`;
                     }}
                   >
-                    <div className="flex items-center gap-5">
-                      {/* Score Circle */}
-                      <div className={`w-16 h-16 rounded-full border-2 ${getScoreRing(entry.trust_score)} flex items-center justify-center shrink-0 shadow-lg ${getScoreGlow(entry.trust_score)}`}>
-                        <span className={`text-xl font-black ${getScoreColor(entry.trust_score)}`}>
+                    <div className="flex items-center gap-3 sm:gap-5">
+                      {/* Score Circle — hidden on mobile */}
+                      <div className={`hidden sm:flex w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 ${getScoreRing(entry.trust_score)} items-center justify-center shrink-0 shadow-lg ${getScoreGlow(entry.trust_score)}`}>
+                        <span className={`text-lg sm:text-xl font-black ${getScoreColor(entry.trust_score)}`}>
                           {entry.trust_score}
                         </span>
                       </div>
 
                       {/* Info */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3 mb-1.5">
-                          <h3 className="text-lg font-bold text-white truncate group-hover:text-blue-400 transition-colors">
+                        <div className="flex items-center gap-2 sm:gap-3 mb-1.5 flex-wrap">
+                          <h3 className="text-base sm:text-lg font-bold text-white truncate group-hover:text-blue-400 transition-colors">
                             {entry.company_name}
                           </h3>
+                          {/* Mobile score */}
+                          <span className={`sm:hidden text-sm font-black ${getScoreColor(entry.trust_score)}`}>
+                            {entry.trust_score}/100
+                          </span>
                           {entry.tier && (
-                            <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-[10px] font-bold uppercase shrink-0">
+                            <span className="hidden sm:inline px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-[10px] font-bold uppercase shrink-0">
                               Tier {entry.tier}
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-3 text-xs text-neutral-500">
-                          <span className="truncate max-w-[250px]">{entry.url}</span>
-                          <span>•</span>
+                        <div className="flex items-center gap-2 sm:gap-3 text-xs text-neutral-500 flex-wrap">
+                          <span className="truncate max-w-[150px] sm:max-w-[250px]">{entry.url}</span>
+                          <span className="hidden sm:inline">•</span>
                           <span className="flex items-center gap-1">
                             <AlertTriangle size={10} /> {entry.red_flags_count} flags
                           </span>
-                          <span>•</span>
-                          <span>{entry.contradictions_count} contradictions</span>
+                          <span className="hidden sm:inline">•</span>
+                          <span className="hidden sm:inline">{entry.contradictions_count} contradictions</span>
                         </div>
                       </div>
 
                       {/* Verdict Badge */}
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        <span className={`px-3 py-1 rounded-full text-xs font-bold border ${vc.bg} ${vc.color} ${vc.border}`}>
+                      <div className="flex flex-col items-end gap-1 sm:gap-2 shrink-0">
+                        <span className={`px-2 sm:px-3 py-1 rounded-full text-[9px] sm:text-xs font-bold border ${vc.bg} ${vc.color} ${vc.border}`}>
                           {entry.legitimacy_verdict.replace(/_/g, " ")}
                         </span>
-                        <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                        <span className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-wider ${
                           entry.risk_level.includes("HIGH") ? "text-red-500" :
                           entry.risk_level.includes("MEDIUM") ? "text-yellow-500" :
                           "text-green-500"
@@ -246,8 +263,8 @@ export default function HistoryPage() {
                         </span>
                       </div>
 
-                      {/* Arrow */}
-                      <ExternalLink size={16} className="text-neutral-700 group-hover:text-blue-500 transition-colors shrink-0" />
+                      {/* Arrow — hidden on mobile */}
+                      <ExternalLink size={16} className="hidden sm:block text-neutral-700 group-hover:text-blue-500 transition-colors shrink-0" />
                     </div>
                   </motion.div>
                 );

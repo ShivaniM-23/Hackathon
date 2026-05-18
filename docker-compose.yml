@@ -17,11 +17,14 @@ services:
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_MODEL=phi3:mini
       - FRONTEND_URL=${APP_URL:-http://localhost:3000}
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_TTL_SECONDS=604800
     volumes:
       - backend_data:/app/data
     depends_on:
       - postgres
       - neo4j
+      - redis
     restart: unless-stopped
 
   # ── Frontend (Next.js) ──────────────────────────────────────────────────────
@@ -70,7 +73,19 @@ services:
       - neo4j_data:/data
     restart: unless-stopped
 
+  # ── Redis (Cache Layer) ─────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: shadowtrace-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   neo4j_data:
   backend_data:
+  redis_data:

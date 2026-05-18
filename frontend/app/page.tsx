@@ -241,16 +241,17 @@ export default function Home() {
   }, [user, authLoading, router]);
 
   useEffect(() => {
-    if (jobId || report) return;
+    if (jobId || report || authLoading) return;
 
-    fetch(`${API_URL}/api/history`)
+    const emailParam = user?.email ? `?user_email=${encodeURIComponent(user.email)}` : "";
+    fetch(`${API_URL}/api/history${emailParam}`)
       .then((response) => response.json())
       .then((data) => {
         setDashStats(Array.isArray(data) ? data : []);
         setStatsLoaded(true);
       })
       .catch(() => setStatsLoaded(true));
-  }, [jobId, report]);
+  }, [jobId, report, user, authLoading]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -327,8 +328,18 @@ export default function Home() {
       });
       const data = await startRes.json();
 
-      if (data.job_id) setJobId(data.job_id);
-      else throw new Error("No job_id returned");
+      if (data.cached && data.status === "complete" && data.job_id) {
+        // Cache hit — load the report instantly
+        setJobId(data.job_id);
+        const reportRes = await fetch(`${API_URL}/api/report/${data.job_id}`);
+        const reportData = await reportRes.json();
+        setReport(reportData);
+        setLoading(false);
+      } else if (data.job_id) {
+        setJobId(data.job_id);
+      } else {
+        throw new Error("No job_id returned");
+      }
     } catch (error) {
       console.error("Analysis initiation failed:", error);
       alert("Failed to start investigation.");
@@ -445,8 +456,8 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="grid flex-1 gap-3 xl:grid-cols-[360px_minmax(0,1fr)_410px]">
-          <aside className="space-y-3 xl:sticky xl:top-3 xl:h-[calc(100vh-88px)] xl:overflow-y-auto">
+        <div className="grid flex-1 gap-3 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)_380px]">
+          <aside className="space-y-3 lg:sticky lg:top-3 lg:h-[calc(100vh-88px)] lg:overflow-y-auto">
             <section className="rounded-lg border border-slate-800 bg-[#0b1224]/95 p-4 shadow-xl shadow-black/20">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
@@ -644,7 +655,7 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="mt-5 grid gap-3 sm:grid-cols-4">
+                    <div className="mt-5 grid gap-3 grid-cols-2 sm:grid-cols-4">
                       <MetricCard label="Sources" value={sourceCount || 0} icon={Globe} />
                       <MetricCard label="Pages" value={report.raw_data_summary?.pages_scraped ?? "N/A"} icon={FileText} />
                       <MetricCard label="Red flags" value={report.red_flags?.length ?? 0} icon={AlertTriangle} tone={(report.red_flags?.length ?? 0) > 0 ? "bad" : "good"} />
@@ -670,7 +681,7 @@ export default function Home() {
                   </div>
 
                   {activeTab === "overview" && (
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
                       <ScoreBreakdown score={report.trust_score} riskLevel={report.risk_level} breakdown={report.score_breakdown} />
                       <div className="space-y-3">
                         <section className="rounded-lg border border-red-400/15 bg-red-400/5 p-4">
@@ -716,12 +727,12 @@ export default function Home() {
                   )}
 
                   {activeTab === "graph" && (
-                    <section className="h-[620px] rounded-lg border border-slate-800 bg-[#0b1224]/95 p-4">
+                    <section className="h-[400px] sm:h-[520px] lg:h-[620px] rounded-lg border border-slate-800 bg-[#0b1224]/95 p-4">
                       <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-200">
                         <Network size={15} className="text-cyan-300" />
                         Knowledge graph
                       </div>
-                      <div className="h-[550px] overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+                      <div className="h-[340px] sm:h-[450px] lg:h-[550px] overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
                         <GraphView report={report} />
                       </div>
                     </section>
@@ -731,7 +742,7 @@ export default function Home() {
             </AnimatePresence>
           </section>
 
-          <aside className="xl:sticky xl:top-3 xl:h-[calc(100vh-88px)]">
+          <aside className="hidden xl:block xl:sticky xl:top-3 xl:h-[calc(100vh-88px)]">
             <section className="flex h-full min-h-[580px] flex-col overflow-hidden rounded-lg border border-slate-800 bg-[#0b1224]/95 shadow-2xl shadow-black/30">
               {hasReport ? (
                 <ChatPanel

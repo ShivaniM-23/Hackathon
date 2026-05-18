@@ -70,8 +70,8 @@ const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
   };
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-xl h-full flex flex-col">
-      <div className="flex items-center justify-between mb-6">
+    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 sm:p-6 shadow-xl h-full flex flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4 sm:mb-6">
         <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-widest flex items-center gap-2">
           <MessageCircle size={18} className="text-blue-400" />
           Public Sentiment Analysis
@@ -88,7 +88,7 @@ const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
         {discovered.github && <div className="px-2 py-1 bg-neutral-100/10 border border-neutral-100/20 rounded text-[10px] text-neutral-100 flex items-center gap-1">✅ GitHub</div>}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
         {/* Reddit Section */}
         <div className="bg-neutral-950 rounded-xl border border-neutral-800 p-4">
           <div className="flex items-center justify-between mb-3">
@@ -150,7 +150,7 @@ const ReviewsPanel: React.FC<ReviewsPanelProps> = ({ report }) => {
           Extended Source Check
         </h3>
         
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
           {Object.entries(report?.raw_data_summary?.extended_sources || {}).map(([key, data]) => {
             const count = data.count ?? 0;
             const isFraud = key === "fraud_signals" && count > 3;

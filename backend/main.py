@@ -99,6 +99,7 @@ async def run_investigation(job_id: str, request: InvestigateRequest):
         "discovered_links": {},
         "report": None,
         "error": None,
+        "user_email": request.user_email,
     }
 
     async def update_job(update_dict: dict):
@@ -162,6 +163,7 @@ async def run_investigation(job_id: str, request: InvestigateRequest):
             "status": "complete",
             "company_name": dossier.get("company_name", "Unknown"),
             "url": request.url,
+            "user_email": request.user_email,
             "trust_score": score_result["score"],
             "risk_level": score_result["risk_level"],
             "score_breakdown": score_result["breakdown"],
@@ -181,7 +183,7 @@ async def run_investigation(job_id: str, request: InvestigateRequest):
         }
         await save_investigation(job_id, final_report)
         # Write to Redis cache so repeat requests are instant
-        await set_cached(request.url, final_report)
+        await set_cached(request.url, final_report, request.user_email)
 
     except Exception as e:
         logger.error(f"Investigation error: {e}")
@@ -292,7 +294,7 @@ async def investigate(request: InvestigateRequest, background_tasks: BackgroundT
 
     # ── Redis cache check ────────────────────────────────────────────────────
     if not request.force_refresh:
-        cached = await get_cached(request.url)
+        cached = await get_cached(request.url, request.user_email)
         if cached:
             job_id = cached["job_id"]
             # Re-persist to file store in case job_store.json was cleared
@@ -309,11 +311,12 @@ async def investigate(request: InvestigateRequest, background_tasks: BackgroundT
             }
     else:
         # force_refresh=true: clear the old cache entry first
-        await invalidate(request.url)
+        await invalidate(request.url, request.user_email)
 
     job_id = str(uuid.uuid4())
     await save_investigation(job_id, {
-        "job_id": job_id, "status": "queued", "progress_pct": 0, "progress_steps": ["Queued..."]
+        "job_id": job_id, "status": "queued", "progress_pct": 0, "progress_steps": ["Queued..."],
+        "user_email": request.user_email
     })
     background_tasks.add_task(run_investigation, job_id, request)
     return {"job_id": job_id, "status": "queued", "message": "Investigation started", "cached": False}
@@ -366,8 +369,8 @@ async def export_pdf(job_id: str):
 
 
 @app.get("/api/history")
-async def get_history():
-    """Returns one entry per unique URL, deduplicating any legacy duplicates."""
+async def get_history(user_email: Optional[str] = None):
+    """Returns one entry per unique URL, deduplicating any legacy duplicates, optionally filtered by user_email."""
     from cache import normalize_url
     all_reports = await get_all_investigations()
 
@@ -375,6 +378,9 @@ async def get_history():
     seen: dict[str, dict] = {}
     for job_id, report in all_reports.items():
         if report.get("status") != "complete":
+            continue
+        # Filter by user_email if provided
+        if user_email and report.get("user_email") != user_email:
             continue
         key = normalize_url(report.get("url", "") or report.get("company_name", job_id))
         existing = seen.get(key)
