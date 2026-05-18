@@ -9,15 +9,12 @@ Falls back to rule-based extraction if no LLM available.
 
 import json
 import re
-import json
+import httpx
 import logging
 import asyncio
-import httpx
-import os
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-GROQ_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # ── LLM config — change OLLAMA_MODEL to switch models ────────────────────────
 OLLAMA_BASE_URL = "http://localhost:11434"
@@ -336,26 +333,34 @@ score_adjustment, contradictions, reasoning
  
 No markdown, no explanation outside the JSON."""
  
-    # Try Groq API first
-    if GROQ_API_KEY:
+    # Try Ollama first, fall back to rule-based
+    try:
+        async with httpx.AsyncClient(timeout=3) as c:
+            health = await c.get("http://localhost:11434/api/tags")
+            ollama_ok = health.status_code == 200
+    except:
+        ollama_ok = False
+    if ollama_ok:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=60) as client:
                 res = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                    "http://localhost:11434/api/generate",
                     json={
-                        "model": "llama-3.1-8b-instant",
-                        "messages": [{"role": "user", "content": analysis_prompt}],
-                        "temperature": 0.1,
-                        "response_format": {"type": "json_object"}
+                        "model": "phi3",
+                        "prompt": analysis_prompt,
+                        "stream": False,
+                        "options": {"temperature": 0.1}
                     }
                 )
-                raw = res.json()["choices"][0]["message"]["content"]
-                result = json.loads(raw)
-                return result
+                raw = res.json().get("response", "")
+                # Clean JSON
+                match = re.search(r'\{.*\}', raw, re.DOTALL)
+                if match:
+                    clean = re.sub(r',\s*([}\]])', r'\1', match.group())
+                    result = json.loads(clean)
+                    return result
         except Exception as e:
-            logger.warning(f"Groq AI analysis failed: {e}")
-            
+            logger.warning(f"AI analysis failed: {e}")
     # Rule-based fallback — reads actual content
     return rule_based_legitimacy_analysis(raw_data, extracted)
  
@@ -503,25 +508,15 @@ def rule_based_legitimacy_analysis(raw_data: dict, extracted: dict) -> dict:
                     "evidence": f"Domain only registered in {domain_year}",
                     "severity": "HIGH"
                 })
-    # Generate dynamic reasoning string
-    reason_parts = []
-    if fraud_signals:
-        reason_parts.append(f"Flagged {len(fraud_signals)} high-risk signals including {fraud_signals[0].lower()}.")
-    if legitimacy_signals:
-        reason_parts.append(f"Verified {len(legitimacy_signals)} trust indicators (e.g., {legitimacy_signals[0].lower()}).")
-    
-    if not reason_parts:
-        final_reasoning = f"Insufficient digital footprint across {len(raw_data.get('pages', []))} scraped pages to determine legitimacy."
-    else:
-        final_reasoning = " ".join(reason_parts)
-
     return {
         "legitimacy_verdict": verdict,
         "fraud_signals": fraud_signals,
         "legitimacy_signals": legitimacy_signals,
         "score_adjustment": max(-40, min(30, score_adjustment)),
         "contradictions": contradictions,
-        "reasoning": final_reasoning
+        "reasoning": f"Based on {len(raw_data.get('pages', []))} pages scraped, "
+                     f"{reddit.get('mentions', 0)} Reddit mentions, "
+                     f"{len(news)} news articles analyzed."
     }
 
 

@@ -80,13 +80,7 @@ async def discover_company_links(url: str) -> dict:
 
 async def scrape_reviews(company_name: str, raw_data: dict):
     """Multi-platform review scraper using Google News RSS as proxy for blocked sites."""
-    if not company_name or len(company_name) < 2:
-        raw_data["reviews"] = _empty_reviews()
-        return
-    
-    # Skip garbage names often returned by blocked scrapers
-    garbage_names = ["unknown", "unknown company", "just a moment", "access denied", "attention required", "cloudflare"]
-    if any(gn in company_name.lower() for gn in garbage_names):
+    if not company_name or company_name == "Unknown":
         raw_data["reviews"] = _empty_reviews()
         return
 
@@ -102,22 +96,10 @@ async def scrape_reviews(company_name: str, raw_data: dict):
             if res.status_code == 200:
                 data = res.json()
                 posts = data.get("data", {}).get("children", [])
-                
-                # Filter out irrelevant posts (Reddit search often pads results)
-                valid_posts = []
-                for post in posts:
-                    p = post.get("data", {})
-                    title = p.get("title", "").lower()
-                    sub = p.get("subreddit", "").lower()
-                    # Very strict: Company name must be in the title or sub!
-                    if company_name.lower() in title or company_name.lower() in sub:
-                        valid_posts.append(post)
-                
-                reviews["reddit"]["mentions"] = len(valid_posts)
+                reviews["reddit"]["mentions"] = len(posts)
                 neg_kw = ["scam", "fraud", "fake", "avoid", "warning", "worst", "bad", "cheat", "liar", "exposed"]
                 pos_kw = ["great", "awesome", "good", "best", "love", "recommend", "amazing", "excellent", "legit"]
-                
-                for post in valid_posts:
+                for post in posts:
                     p = post.get("data", {})
                     title = p.get("title", "").lower()
                     post_info = {
