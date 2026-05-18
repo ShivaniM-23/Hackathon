@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!
 const APP_URL = process.env.NEXTAUTH_URL || "http://localhost:3000"
 const REDIRECT_URI = `${APP_URL}/api/google-auth/callback`
 

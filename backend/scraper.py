@@ -359,10 +359,30 @@ async def scrape_company(url: str, linkedin_url: str = None, gst_number: str = N
     raw_data["discovered_links"] = discovered
 
     # Step 2: Resolve targets
-    final_linkedin = linkedin_url or discovered.get("linkedin")
     company_name = discovered.get("company_name") or urlparse(url).netloc.replace("www.", "").split(".")[0].title()
+    linkedin_validation = _validate_linkedin_association(url, company_name, discovered.get("linkedin"), linkedin_url)
+    final_linkedin = discovered.get("linkedin")
+    if linkedin_url and linkedin_validation["valid"]:
+        final_linkedin = linkedin_url
+    elif linkedin_url and not discovered.get("linkedin"):
+        final_linkedin = None
+
+    raw_data["linkedin_validation"] = linkedin_validation
     raw_data["url_linkedin"] = final_linkedin
     raw_data["company_name"] = company_name
+
+    if linkedin_url and not linkedin_validation["valid"]:
+        raw_data["linkedin"] = {
+            "url": linkedin_url,
+            "profile_exists": False,
+            "association_valid": False,
+            "validation_error": linkedin_validation["reason"],
+            "raw_text": "",
+            "employee_count": None,
+            "founded_year": None,
+            "scraped_at": datetime.now().isoformat(),
+        }
+        raw_data["errors"].append({"source": "linkedin", "error": linkedin_validation["reason"]})
 
     # Step 3: Run all scrapers concurrently
     tasks = [
@@ -496,6 +516,57 @@ def _rank_links(links: list[str]) -> list[str]:
         priority = 0 if any(kw in path for kw in PRIORITY_PATH_KEYWORDS) else 1
         return (priority, path.count("/"), link)
     return sorted(links, key=score)
+
+
+def _slug_tokens(value: str) -> set[str]:
+    value = value.lower()
+    value = re.sub(r"https?://|www\.|linkedin\.com|company|organization", " ", value)
+    value = re.sub(r"\b(com|in|ai|io|co|inc|pvt|ltd|limited|llc|corp|private|global|official)\b", " ", value)
+    return {token for token in re.findall(r"[a-z0-9]+", value) if len(token) >= 3}
+
+
+def _linkedin_slug(linkedin_url: Optional[str]) -> str:
+    if not linkedin_url:
+        return ""
+    parsed = urlparse(linkedin_url if linkedin_url.startswith("http") else f"https://{linkedin_url}")
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) >= 2 and parts[0].lower() == "company":
+        return parts[1].lower()
+    return parts[-1].lower() if parts else ""
+
+
+def _validate_linkedin_association(
+    company_url: str,
+    company_name: str,
+    discovered_linkedin: Optional[str],
+    provided_linkedin: Optional[str],
+) -> dict:
+    if not provided_linkedin:
+        return {"valid": True, "reason": "No user-provided LinkedIn URL"}
+
+    provided_slug = _linkedin_slug(provided_linkedin)
+    discovered_slug = _linkedin_slug(discovered_linkedin)
+    if discovered_slug and provided_slug and provided_slug != discovered_slug:
+        return {
+            "valid": False,
+            "reason": "Provided LinkedIn profile does not match the LinkedIn profile discovered on the company website",
+            "provided_linkedin": provided_linkedin,
+            "discovered_linkedin": discovered_linkedin,
+        }
+
+    host = urlparse(company_url if "://" in company_url else f"https://{company_url}").netloc
+    company_tokens = _slug_tokens(f"{host} {company_name}")
+    linkedin_tokens = _slug_tokens(provided_slug)
+
+    if company_tokens and linkedin_tokens and company_tokens.isdisjoint(linkedin_tokens):
+        return {
+            "valid": False,
+            "reason": "Provided LinkedIn profile slug does not appear related to the company website or company name",
+            "provided_linkedin": provided_linkedin,
+            "company_name": company_name,
+        }
+
+    return {"valid": True, "reason": "LinkedIn profile appears related to the company"}
 
 
 def _classify_page_source(url: str) -> str:

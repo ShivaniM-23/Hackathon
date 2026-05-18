@@ -2,11 +2,11 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ShieldAlert, ArrowLeft, Clock, Search, AlertTriangle,
-  CheckCircle, XCircle, Activity, ExternalLink, FileText, Filter
+  ArrowLeft, Clock, Search, AlertTriangle,
+  ExternalLink, FileText
 } from "lucide-react";
 
 interface HistoryEntry {
@@ -27,12 +27,6 @@ const verdictConfig: Record<string, { color: string; bg: string; border: string 
   UNCERTAIN: { color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20" },
   LIKELY_FRAUDULENT: { color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20" },
   FRAUDULENT: { color: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/20" },
-};
-
-const tierLabels: Record<number, string> = {
-  1: "Enterprise",
-  2: "Established SME",
-  3: "Unknown / New",
 };
 
 function getScoreColor(score: number): string {
@@ -62,22 +56,25 @@ export default function HistoryPage() {
   const [search, setSearch] = useState("");
   const [filterRisk, setFilterRisk] = useState<string>("ALL");
 
-  useEffect(() => {
-    fetchHistory();
-  }, []);
-
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/history`);
       const data = await res.json();
       setHistory(data);
-    } catch (e) {
-      console.error("Failed to fetch history:", e);
+    } catch (error) {
+      console.error("Failed to fetch history:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      fetchHistory();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchHistory]);
 
   const filtered = history.filter((entry) => {
     const matchesSearch =
@@ -201,7 +198,7 @@ export default function HistoryPage() {
                     onClick={() => {
                       localStorage.setItem("investigate_url", entry.url);
                       localStorage.setItem("investigate_job_id", entry.job_id);
-                      window.location.href = "/";
+                      window.location.href = `/?job_id=${encodeURIComponent(entry.job_id)}`;
                     }}
                   >
                     <div className="flex items-center gap-5">

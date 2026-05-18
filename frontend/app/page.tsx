@@ -2,23 +2,39 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-import { useState, useEffect, useRef } from "react";
-import { useUser } from "./hooks/useUser";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  Search, ShieldAlert, CheckCircle, AlertTriangle,
-  XCircle, ArrowRight, MessageSquare, Send,
-  FileText, Activity, Globe, Info, Download, Mail, Volume2, VolumeX,
-  BarChart3, TrendingDown, TrendingUp, Clock
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  Clock,
+  Download,
+  FileText,
+  Gauge,
+  GitCompareArrows,
+  Globe,
+  History,
+  Link2,
+  LogOut,
+  Network,
+  Search,
+  ShieldAlert,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
-import GraphView from "../components/GraphView";
-import ContradictionTable from "../components/ContradictionTable";
+import { useUser } from "./hooks/useUser";
 import ChatPanel from "../components/ChatPanel";
+import ContradictionTable from "../components/ContradictionTable";
+import GraphView from "../components/GraphView";
 import ReviewsPanel from "../components/ReviewsPanel";
 import ScoreBreakdown from "../components/ScoreBreakdown";
 
-// --- Types ---
 interface Contradiction {
   field: string;
   claimed: string;
@@ -53,79 +69,276 @@ interface Report {
     pages_scraped?: number;
     reviews?: unknown;
     discovered_links?: Record<string, string | null>;
+    extended_sources?: Record<string, {
+      found?: boolean;
+      count?: number;
+      rating?: number;
+    }>;
   };
   reviews?: unknown;
   progress_steps?: string[];
+  progress_pct?: number;
   progress?: number;
-  steps?: { step: string, detail: string, pct: number }[];
+  steps?: { step: string; detail: string; pct: number }[];
 }
 
-const LoadingSkeleton = ({ steps }: { steps?: { step: string, detail: string, pct: number }[] }) => (
-  <div className="space-y-6 animate-pulse">
-    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-8">
-      <div className="flex items-center gap-4 mb-6">
-        <div className="w-12 h-12 bg-neutral-800 rounded-full animate-spin border-2 border-t-blue-500 border-neutral-700" />
-        <div>
-          <div className="h-5 w-48 bg-neutral-800 rounded mb-2" />
-          <div className="h-3 w-32 bg-neutral-800 rounded opacity-50" />
-        </div>
+interface DashStat {
+  job_id: string;
+  company_name: string;
+  trust_score: number;
+  risk_level: string;
+  legitimacy_verdict: string;
+  red_flags_count: number;
+}
+
+type ActiveTab = "overview" | "evidence" | "graph";
+
+const tabs: { key: ActiveTab; label: string; icon: typeof Gauge }[] = [
+  { key: "overview", label: "Overview", icon: Gauge },
+  { key: "evidence", label: "Evidence", icon: FileText },
+  { key: "graph", label: "Graph", icon: Network },
+];
+
+function riskClass(risk?: string) {
+  if (risk?.includes("LOW")) return "border-emerald-400/25 bg-emerald-400/10 text-emerald-200";
+  if (risk?.includes("HIGH")) return "border-red-400/25 bg-red-400/10 text-red-200";
+  return "border-amber-400/25 bg-amber-400/10 text-amber-200";
+}
+
+function scoreClass(score = 0) {
+  if (score >= 75) return "text-emerald-300";
+  if (score >= 55) return "text-amber-300";
+  if (score >= 30) return "text-orange-300";
+  return "text-red-300";
+}
+
+function tierLabel(tier?: number) {
+  if (tier === 1) return "Tier 1 Enterprise";
+  if (tier === 2) return "Tier 2 Established";
+  if (tier === 3) return "Tier 3 Unknown";
+  return "Verification tier";
+}
+
+function verdictClass(verdict?: string) {
+  if (verdict === "LEGITIMATE" || verdict === "LIKELY_LEGITIMATE") {
+    return "border-emerald-400/25 bg-emerald-400/10 text-emerald-200";
+  }
+  if (verdict === "FRAUDULENT" || verdict === "LIKELY_FRAUDULENT") {
+    return "border-red-400/25 bg-red-400/10 text-red-200";
+  }
+  return "border-amber-400/25 bg-amber-400/10 text-amber-200";
+}
+
+function MetricCard({ label, value, icon: Icon, tone = "neutral" }: {
+  label: string;
+  value: string | number;
+  icon: typeof BarChart3;
+  tone?: "neutral" | "good" | "warn" | "bad";
+}) {
+  const tones = {
+    neutral: "border-slate-800 bg-slate-950/60 text-slate-100",
+    good: "border-emerald-400/20 bg-emerald-400/10 text-emerald-200",
+    warn: "border-amber-400/20 bg-amber-400/10 text-amber-200",
+    bad: "border-red-400/20 bg-red-400/10 text-red-200",
+  };
+
+  return (
+    <div className={`rounded-lg border p-4 ${tones[tone]}`}>
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
+        <Icon size={16} className="text-cyan-300" />
       </div>
-      <div className="space-y-3">
-        {(steps ?? []).slice(-3).map((s, i) => (
-          <div key={i} className="flex items-center gap-3 text-xs text-neutral-500">
-            <span className="text-blue-500">→</span>
-            <span>{s.detail}</span>
+      <div className="text-2xl font-semibold tracking-tight">{value}</div>
+    </div>
+  );
+}
+
+function ProgressCard({ report }: { report: Report | null }) {
+  const steps = report?.progress_steps ?? ["Queued investigation"];
+  const pct = report?.progress_pct ?? report?.progress ?? 12;
+
+  return (
+    <section className="rounded-lg border border-slate-800 bg-slate-900/85 p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-white">Investigation in progress</p>
+          <p className="text-xs text-slate-500">Scraping sources, scoring trust signals, and preparing the report.</p>
+        </div>
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-300" />
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+        <div className="h-full rounded-full bg-cyan-300 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {steps.slice(-4).map((step, index) => (
+          <div key={`${step}-${index}`} className="rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-400">
+            {step}
           </div>
         ))}
       </div>
-    </div>
-    <div className="h-64 bg-neutral-900 border border-neutral-800 rounded-2xl" />
-  </div>
-);
+    </section>
+  );
+}
 
 export default function Home() {
   const { user, loading: authLoading, signOut } = useUser();
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [linkedin, setLinkedin] = useState("");
-  const [gst, setGst] = useState("");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-
-  // Chat state
-  const [chatMessage, setChatMessage] = useState("");
-  const [chatHistory, setChatHistory] = useState<{ role: string, content: string }[]>([]);
-  const [chatLoading, setChatLoading] = useState(false);
-
-  // Dashboard stats
-  interface DashStat {
-    job_id: string;
-    company_name: string;
-    trust_score: number;
-    risk_level: string;
-    legitimacy_verdict: string;
-    red_flags_count: number;
-  }
   const [dashStats, setDashStats] = useState<DashStat[]>([]);
   const [statsLoaded, setStatsLoaded] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
+  const failCount = useRef(0);
 
   useEffect(() => {
-    if (!jobId && !report) {
-      fetch(`${API_URL}/api/history`)
-        .then(r => r.json())
-        .then(data => { setDashStats(data); setStatsLoaded(true); })
-        .catch(() => setStatsLoaded(true));
+    if (!user && !authLoading) {
+      router.push("/login");
+      return;
     }
+
+    const params = new URLSearchParams(window.location.search);
+    const requestedJobId = params.get("job_id");
+    const storedUrl = localStorage.getItem("investigate_url");
+    const storedJobId = requestedJobId || localStorage.getItem("investigate_job_id");
+
+    if (storedUrl || storedJobId) {
+      window.setTimeout(async () => {
+        if (storedUrl) {
+          setUrl(storedUrl);
+          localStorage.removeItem("investigate_url");
+        }
+
+        if (storedJobId) {
+          setLoading(true);
+          localStorage.removeItem("investigate_job_id");
+          let shouldPoll = false;
+          try {
+            const response = await fetch(`${API_URL}/api/report/${storedJobId}`);
+            if (!response.ok) throw new Error(`Report ${storedJobId} not found`);
+            const data = await response.json();
+            setReport(data);
+            if (data.status !== "complete" && data.status !== "error") {
+              shouldPoll = true;
+              setJobId(storedJobId);
+            }
+          } catch (error) {
+            console.error("Failed to load selected history report:", error);
+            shouldPoll = true;
+            setJobId(storedJobId);
+          } finally {
+            setLoading(shouldPoll);
+            if (requestedJobId) {
+              window.history.replaceState({}, "", "/");
+            }
+          }
+        }
+      }, 0);
+    }
+  }, [user, authLoading, router]);
+
+  useEffect(() => {
+    if (jobId || report) return;
+
+    fetch(`${API_URL}/api/history`)
+      .then((response) => response.json())
+      .then((data) => {
+        setDashStats(Array.isArray(data) ? data : []);
+        setStatsLoaded(true);
+      })
+      .catch(() => setStatsLoaded(true));
   }, [jobId, report]);
 
-  // Voice briefing state
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  useEffect(() => {
+    if (!jobId) return;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/report/${jobId}`);
+
+        if (!res.ok) {
+          if (res.status === 404) {
+            failCount.current += 1;
+            if (failCount.current >= 3) {
+              setLoading(false);
+              setJobId(null);
+              alert("Investigation session lost. Please start the investigation again.");
+              clearInterval(pollInterval);
+            }
+          }
+          return;
+        }
+
+        failCount.current = 0;
+        const data = await res.json();
+        setReport(data);
+
+        if (data.status === "complete" || data.status === "error") {
+          setLoading(false);
+          setJobId(null);
+          setActiveTab("overview");
+          clearInterval(pollInterval);
+        }
+      } catch (error) {
+        console.error("Polling error:", error);
+      }
+    };
+
+    const pollInterval: NodeJS.Timeout = setInterval(poll, 2000);
+    poll();
+
+    return () => clearInterval(pollInterval);
+  }, [jobId]);
+
+  const discoveredLinks = useMemo(() => {
+    return Object.entries(report?.discovered_links ?? {})
+      .filter(([key, value]) => value && key !== "website" && key !== "company_name" && key !== "crunchbase")
+      .slice(0, 5);
+  }, [report?.discovered_links]);
+
+  const sourceCount = new Set(report?.raw_data_summary?.scraped_sources ?? []).size;
+  const hasReport = report?.status === "complete";
+  const averageScore = dashStats.length
+    ? Math.round(dashStats.reduce((sum, item) => sum + item.trust_score, 0) / dashStats.length)
+    : 0;
+  const riskiest = dashStats.length
+    ? dashStats.reduce((lowest, current) => current.trust_score < lowest.trust_score ? current : lowest)
+    : null;
+
+  const handleAnalyze = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    setReport(null);
+    setJobId(null);
+    setActiveTab("overview");
+
+    try {
+      const startRes = await fetch(`${API_URL}/api/investigate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          linkedin_url: linkedin,
+          user_email: user?.email,
+        }),
+      });
+      const data = await startRes.json();
+
+      if (data.job_id) setJobId(data.job_id);
+      else throw new Error("No job_id returned");
+    } catch (error) {
+      console.error("Analysis initiation failed:", error);
+      alert("Failed to start investigation.");
+      setLoading(false);
+    }
+  };
 
   const speakBriefing = () => {
     if (!report || report.status !== "complete") return;
 
-    // Toggle off if already speaking
     if (isSpeaking) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
@@ -143,34 +356,21 @@ export default function Home() {
     let script = `Shadow Trace AI has completed its investigation of ${name}. `;
     script += `The company received a trust score of ${score} out of 100, classified as ${risk.replace(/_/g, " ").toLowerCase()} risk. `;
     script += `Our verdict: ${verdict}. `;
-
-    if (flags.length > 0) {
-      script += `We detected ${flags.length} red flag${flags.length > 1 ? "s" : ""}. `;
-      script += `The top concern is: ${flags[0]}. `;
-    } else {
-      script += `No major red flags were identified. `;
-    }
-
+    script += flags.length > 0
+      ? `We detected ${flags.length} red flag${flags.length > 1 ? "s" : ""}. The top concern is: ${flags[0]}. `
+      : "No major red flags were identified. ";
     if (contradictions.length > 0) {
-      script += `${contradictions.length} contradiction${contradictions.length > 1 ? "s were" : " was"} found between the company's claims and our evidence. `;
+      script += `${contradictions.length} contradiction${contradictions.length > 1 ? "s were" : " was"} found between claims and evidence. `;
     }
-
-    if (signals.length > 0) {
-      script += `On the positive side, ${signals[0].toLowerCase()}. `;
-    }
-
-    script += `This concludes the Shadow Trace AI executive briefing.`;
+    if (signals.length > 0) script += `On the positive side, ${signals[0].toLowerCase()}. `;
+    script += "This concludes the Shadow Trace AI executive briefing.";
 
     const utterance = new SpeechSynthesisUtterance(script);
     utterance.rate = 0.95;
-    utterance.pitch = 1.0;
-
-    // Try to pick a good English voice
+    utterance.pitch = 1;
     const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v => v.name.includes("Google") && v.lang.startsWith("en")) ||
-                      voices.find(v => v.lang.startsWith("en"));
+    const preferred = voices.find(v => v.name.includes("Google") && v.lang.startsWith("en")) || voices.find(v => v.lang.startsWith("en"));
     if (preferred) utterance.voice = preferred;
-
     utterance.onend = () => setIsSpeaking(false);
     utterance.onerror = () => setIsSpeaking(false);
 
@@ -178,532 +378,382 @@ export default function Home() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // --- Polling Logic (Fix for Bug 2 & Persistence Support) ---
-  const failCount = useRef(0);
-
-  useEffect(() => {
-    if (!user && !authLoading) {
-      router.push("/login");
-      return;
-    }
-
-    const storedUrl = localStorage.getItem("investigate_url");
-    const storedJobId = localStorage.getItem("investigate_job_id");
-    
-    if (storedUrl) {
-      setUrl(storedUrl);
-      localStorage.removeItem("investigate_url");
-    }
-    
-    if (storedJobId) {
-      setJobId(storedJobId);
-      setLoading(true);
-      localStorage.removeItem("investigate_job_id");
-    }
-  }, [user, authLoading, router]);
-
-  useEffect(() => {
-    if (!jobId) return;
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/report/${jobId}`);
-
-        if (!res.ok) {
-          if (res.status === 404) {
-            failCount.current += 1;
-            if (failCount.current >= 3) {
-              // Server state lost or job expired
-              setLoading(false);
-              setJobId(null);
-              alert("Investigation session lost (likely due to server restart). Please start the investigation again.");
-              clearInterval(pollInterval);
-            }
-          }
-          return;
-        }
-
-        // Reset fail count on success
-        failCount.current = 0;
-
-        const data = await res.json();
-        setReport(data);
-        console.log("REPORT DATA SUCCESS:", data.job_id);
-
-        if (data.status === "complete" || data.status === "error") {
-          setLoading(false);
-          setJobId(null); // Stop polling
-          clearInterval(pollInterval);
-        }
-      } catch (err) {
-        console.error("Polling error:", err);
-      }
-    };
-
-    const pollInterval: NodeJS.Timeout = setInterval(poll, 2000);
-    poll(); // Initial call
-
-    return () => clearInterval(pollInterval);
-  }, [jobId]);
-
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
-        <div className="text-neutral-500">Loading...</div>
-      </div>
+      <main className="grid min-h-screen place-items-center bg-[#050816] text-slate-400">
+        Loading...
+      </main>
     );
   }
 
-  if (!user && !authLoading) {
-    return null;
-  }
-
-  const handleAnalyze = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setReport(null);
-    setChatHistory([]);
-    setJobId(null); // Reset prev job
-
-    try {
-      const startRes = await fetch(`${API_URL}/api/investigate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url,
-          linkedin_url: linkedin,
-          gst_number: gst,
-          user_email: user?.email
-        }),
-      });
-      const data = await startRes.json();
-
-      if (data.job_id) {
-        setJobId(data.job_id); // This triggers the useEffect polling
-      } else {
-        throw new Error("No job_id returned");
-      }
-    } catch (error) {
-      console.error("Analysis initiation failed:", error);
-      alert("Failed to start investigation.");
-      setLoading(false);
-    }
-  };
-
-  const handleChat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim() || !report) return;
-
-    const newUserMsg = chatMessage;
-    setChatHistory(prev => [...prev, { role: "user", content: newUserMsg }]);
-    setChatMessage("");
-    setChatLoading(true);
-
-    try {
-      const response = await fetch(`${API_URL}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: newUserMsg, job_id: report.job_id }),
-      });
-      const data = await response.json();
-      setChatHistory(prev => [...prev, { role: "assistant", content: data.response || data.reply }]);
-    } catch (error) {
-      setChatHistory(prev => [...prev, { role: "assistant", content: "Error connecting to AI." }]);
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-
-  const verdictColors: Record<string, string> = {
-    LEGITIMATE: "bg-green-500/20 text-green-400 border-green-500/30",
-    LIKELY_LEGITIMATE: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-    UNCERTAIN: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-    LIKELY_FRAUDULENT: "bg-orange-500/20 text-orange-400 border-orange-500/30",
-    FRAUDULENT: "bg-red-500/20 text-red-400 border-red-500/30",
-  };
+  if (!user && !authLoading) return null;
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans">
-      <div className="max-w-7xl mx-auto px-6 py-12">
+    <main className="min-h-screen bg-[#050816] text-slate-100">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.14),transparent_32%),radial-gradient(circle_at_top_right,rgba(16,185,129,0.08),transparent_28%)]" />
 
-        <header className="mb-12">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-sm font-medium">
-              <ShieldAlert size={16} /> ShadowTrace AI
+      <div className="relative mx-auto flex min-h-screen max-w-[1760px] flex-col px-3 py-3 sm:px-5">
+        <header className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800/90 bg-[#0b1224]/95 px-4 py-3 shadow-2xl shadow-black/30">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-lg bg-cyan-400 text-slate-950 shadow-lg shadow-cyan-500/20">
+              <ShieldAlert size={21} />
             </div>
-            {user && (
-              <div className="flex items-center gap-3">
-                <img
-                  src={user.image ?? ""}
-                  className="w-8 h-8 rounded-full"
-                  alt="avatar"
-                />
-                <span className="text-sm text-neutral-400">{user.email}</span>
-                <button
-                  onClick={signOut}
-                  className="text-xs text-neutral-600 hover:text-red-400 transition-colors"
-                >
-                  Sign out
-                </button>
-              </div>
-            )}
+            <div>
+              <div className="text-sm font-bold text-white">ShadowTrace AI</div>
+              <div className="text-xs text-slate-500">Digital diligence command center</div>
+            </div>
           </div>
-          <h1 className="text-4xl font-bold tracking-tight mt-4">Digital Due Diligence</h1>
-        </header>
 
-        <div className="grid lg:grid-cols-12 gap-8">
-
-          {/* Sidebar */}
-          <aside className="lg:col-span-4 space-y-6">
-            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
-              <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                <Search className="text-blue-400" size={18} /> New Investigation
-              </h2>
-              <form onSubmit={handleAnalyze} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase ml-1">Company Website</label>
-                  <input
-                    type="url" required placeholder="https://company.com"
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-blue-500 text-sm"
-                    value={url} onChange={(e) => setUrl(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase ml-1">LinkedIn URL (Optional)</label>
-                  <input
-                    type="url" placeholder="https://linkedin.com/company/..."
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-blue-500 text-sm"
-                    value={linkedin} onChange={(e) => setLinkedin(e.target.value)}
-                  />
-                </div>
-
-                <button
-                  type="submit" disabled={loading}
-                  className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold transition-all disabled:opacity-50 shadow-lg shadow-blue-500/10"
-                >
-                  {loading ? "Discovering & Analyzing..." : "Start Investigation"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => window.location.href = '/compare'}
-                  className="w-full bg-neutral-950 border border-neutral-800 hover:bg-neutral-800 py-3 rounded-xl font-bold text-neutral-400 hover:text-white transition-all flex items-center justify-center gap-2"
-                >
-                  <Activity size={16} /> Multi-Vendor Comparison
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => window.location.href = '/history'}
-                  className="w-full bg-neutral-950 border border-neutral-800 hover:bg-neutral-800 py-3 rounded-xl font-bold text-neutral-400 hover:text-white transition-all flex items-center justify-center gap-2"
-                >
-                  <FileText size={16} /> Investigation History
-                </button>
-              </form>
-
-              {/* Discovered Links Feedback */}
-              {report?.discovered_links && Object.values(report.discovered_links).some(v => v) && (
-                <div className="mt-6 pt-6 border-t border-neutral-800">
-                  <h3 className="text-[10px] font-bold text-neutral-500 uppercase mb-3 flex items-center gap-1">
-                    <Globe size={10} /> Discovered Links
-                  </h3>
-                  <div className="space-y-2">
-                    {Object.entries(report.discovered_links).map(([key, val]) => {
-                      if (!val || key === 'website') return null
-                      const icons: Record<string, string | null> = {
-                        linkedin: '💼', twitter: '🐦', github: '💻',
-                        crunchbase: '📊', company_name: null
-                      }
-                      if (key === 'company_name') return null
-                      return (
-                        <a
-                          key={key}
-                          href={val as string}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-between text-[11px] bg-neutral-950 border border-neutral-800 hover:border-blue-500/50 p-2 rounded-lg transition-all group"
-                        >
-                          <span className="text-neutral-400 capitalize flex items-center gap-1.5">
-                            <span>{icons[key] || '🔗'}</span> {key}
-                          </span>
-                          <span className="text-blue-400 text-[10px] group-hover:text-blue-300 truncate max-w-[110px]">
-                            {(val as string).replace('https://', '').replace('http://', '').slice(0, 25)}...
-                          </span>
-                        </a>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Scraped Sources */}
-              {report?.raw_data_summary?.scraped_sources && (
-                <div className="mt-4 pt-4 border-t border-neutral-800">
-                  <h3 className="text-[10px] font-bold text-neutral-500 uppercase mb-2">Sources Scraped</h3>
-                  <div className="flex flex-wrap gap-1">
-                    {Array.from(new Set(report.raw_data_summary.scraped_sources as string[])).map((src: string) => (
-                      <span key={src} className="text-[10px] px-2 py-0.5 bg-green-500/10 text-green-400 border border-green-500/20 rounded-full">
-                        ✓ {src}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Progress Steps */}
-              {report?.progress_steps && report.status !== 'complete' && (
-                <div className="mt-4 pt-4 border-t border-neutral-800 space-y-1">
-                  {(report.progress_steps as string[]).slice(-4).map((step: string, i: number) => (
-                    <div key={i} className="text-[10px] text-neutral-500 flex gap-1.5">
-                      <span className="text-blue-400 shrink-0">›</span>
-                      <span>{step}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {report?.status === "complete" && (
-              <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            {hasReport && (
+              <>
                 <button
                   onClick={() => window.open(`${API_URL}/api/export/${report.job_id}`)}
-                  className="w-full flex items-center justify-center gap-2 p-4 bg-neutral-900 border border-neutral-800 rounded-xl hover:bg-neutral-800 transition-all"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-400/50 hover:text-cyan-200"
                 >
-                  <Download size={18} /> Download PDF Report
+                  <Download size={14} />
+                  Export
                 </button>
                 <button
                   onClick={speakBriefing}
-                  className={`w-full flex items-center justify-center gap-2 p-4 rounded-xl font-semibold transition-all border ${
+                  className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
                     isSpeaking
-                      ? "bg-blue-600/20 border-blue-500/40 text-blue-400 hover:bg-blue-600/30"
-                      : "bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                      ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200"
+                      : "border-slate-700 bg-slate-950 text-slate-300 hover:border-cyan-400/50"
                   }`}
                 >
-                  {isSpeaking ? <VolumeX size={18} /> : <Volume2 size={18} />}
-                  {isSpeaking ? "Stop Briefing" : "Voice AI Briefing"}
+                  {isSpeaking ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                  {isSpeaking ? "Stop" : "Briefing"}
+                </button>
+              </>
+            )}
+            <div className="hidden items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 sm:flex">
+              <div
+                className="h-7 w-7 rounded-full bg-slate-700 bg-cover bg-center"
+                style={{ backgroundImage: user?.image ? `url(${user.image})` : undefined }}
+              />
+              <span className="max-w-[220px] truncate text-xs text-slate-400">{user?.email}</span>
+            </div>
+            <button
+              onClick={signOut}
+              className="grid h-9 w-9 place-items-center rounded-lg border border-slate-800 text-slate-400 transition hover:border-red-400/40 hover:text-red-300"
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+        </header>
+
+        <div className="grid flex-1 gap-3 xl:grid-cols-[360px_minmax(0,1fr)_410px]">
+          <aside className="space-y-3 xl:sticky xl:top-3 xl:h-[calc(100vh-88px)] xl:overflow-y-auto">
+            <section className="rounded-lg border border-slate-800 bg-[#0b1224]/95 p-4 shadow-xl shadow-black/20">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <h1 className="text-base font-semibold text-white">New investigation</h1>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">Start with a domain. Add LinkedIn only when you have the correct company profile.</p>
+                </div>
+                <Search size={18} className="mt-1 text-cyan-300" />
+              </div>
+
+              <form onSubmit={handleAnalyze} className="space-y-3">
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Company website</span>
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://company.com"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
+                    value={url}
+                    onChange={(event) => setUrl(event.target.value)}
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">LinkedIn URL</span>
+                  <input
+                    type="url"
+                    placeholder="Optional"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
+                    value={linkedin}
+                    onChange={(event) => setLinkedin(event.target.value)}
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-400 px-4 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                >
+                  <Sparkles size={15} />
+                  {loading ? "Investigating..." : "Start investigation"}
+                </button>
+              </form>
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.location.href = "/compare"}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2.5 text-xs font-semibold text-slate-400 transition hover:border-cyan-400/40 hover:text-cyan-200"
+                >
+                  <GitCompareArrows size={14} />
+                  Compare
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.location.href = "/history"}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2.5 text-xs font-semibold text-slate-400 transition hover:border-cyan-400/40 hover:text-cyan-200"
+                >
+                  <History size={14} />
+                  History
                 </button>
               </div>
+            </section>
+
+            {hasReport && (
+              <section className="rounded-lg border border-slate-800 bg-[#0b1224]/95 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-200">
+                  <Link2 size={15} className="text-cyan-300" />
+                  Discovered links
+                </div>
+                <div className="space-y-2">
+                  {discoveredLinks.length > 0 ? discoveredLinks.map(([key, value]) => (
+                    <a
+                      key={key}
+                      href={value as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs transition hover:border-cyan-400/40"
+                    >
+                      <span className="capitalize text-slate-300">{key}</span>
+                      <span className="truncate text-slate-500">{String(value).replace(/^https?:\/\//, "")}</span>
+                    </a>
+                  )) : (
+                    <p className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-500">No external links found.</p>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {!hasReport && statsLoaded && dashStats.length > 0 && (
+              <section className="rounded-lg border border-slate-800 bg-[#0b1224]/95 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-200">
+                  <Clock size={15} className="text-cyan-300" />
+                  Recent checks
+                </div>
+                <div className="space-y-2">
+                  {dashStats.slice(0, 4).map((item) => (
+                    <button
+                      key={item.job_id}
+                      onClick={() => {
+                        localStorage.setItem("investigate_job_id", item.job_id);
+                        window.location.reload();
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-left transition hover:border-cyan-400/40"
+                    >
+                      <span className="min-w-0 truncate text-xs font-semibold text-slate-300">{item.company_name}</span>
+                      <span className={`shrink-0 text-xs font-bold ${scoreClass(item.trust_score)}`}>{item.trust_score}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
             )}
           </aside>
 
-          {/* Main Section */}
-          <section className="lg:col-span-8 space-y-6">
-            {!jobId && !report && (
-              <div className="space-y-6">
-                {/* Stats Cards */}
+          <section className="min-w-0 space-y-3">
+            {!hasReport && !jobId && (
+              <div className="space-y-3">
                 {statsLoaded && dashStats.length > 0 ? (
                   <>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
-                        <BarChart3 className="mx-auto text-blue-500 mb-2" size={24} />
-                        <div className="text-3xl font-black text-white">{dashStats.length}</div>
-                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1 font-semibold">Investigations</div>
-                      </div>
-                      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
-                        <TrendingUp className="mx-auto text-green-500 mb-2" size={24} />
-                        <div className={`text-3xl font-black ${
-                          (dashStats.reduce((s, h) => s + h.trust_score, 0) / dashStats.length) >= 55 ? 'text-green-400' : 'text-yellow-400'
-                        }`}>
-                          {Math.round(dashStats.reduce((s, h) => s + h.trust_score, 0) / dashStats.length)}
-                        </div>
-                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1 font-semibold">Avg Score</div>
-                      </div>
-                      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
-                        <AlertTriangle className="mx-auto text-red-500 mb-2" size={24} />
-                        <div className="text-3xl font-black text-red-400">
-                          {dashStats.filter(h => h.risk_level.includes('HIGH')).length}
-                        </div>
-                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1 font-semibold">High Risk</div>
-                      </div>
-                      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center">
-                        <CheckCircle className="mx-auto text-emerald-500 mb-2" size={24} />
-                        <div className="text-3xl font-black text-emerald-400">
-                          {dashStats.filter(h => h.trust_score >= 75).length}
-                        </div>
-                        <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1 font-semibold">Trusted</div>
-                      </div>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <MetricCard label="Investigations" value={dashStats.length} icon={BarChart3} />
+                      <MetricCard label="Avg score" value={averageScore} icon={TrendingUp} tone={averageScore >= 55 ? "good" : "warn"} />
+                      <MetricCard label="High risk" value={dashStats.filter(item => item.risk_level.includes("HIGH")).length} icon={AlertTriangle} tone="bad" />
+                      <MetricCard label="Trusted" value={dashStats.filter(item => item.trust_score >= 75).length} icon={CheckCircle2} tone="good" />
                     </div>
 
-                    {/* Highest Risk Company */}
-                    {(() => {
-                      const riskiest = dashStats.reduce((a, b) => a.trust_score < b.trust_score ? a : b);
-                      return (
-                        <div className="bg-gradient-to-r from-red-950/30 to-neutral-900 border border-red-900/30 rounded-2xl p-5">
-                          <div className="flex items-center gap-3 mb-2">
-                            <TrendingDown className="text-red-500" size={18} />
-                            <span className="text-xs font-bold text-red-400 uppercase tracking-wider">Highest Risk Detected</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h4 className="text-lg font-bold text-white">{riskiest.company_name}</h4>
-                              <span className="text-xs text-neutral-500">{riskiest.red_flags_count} red flags • {riskiest.risk_level.replace(/_/g, ' ')}</span>
-                            </div>
-                            <div className="text-3xl font-black text-red-400">{riskiest.trust_score}<span className="text-sm text-neutral-600">/100</span></div>
-                          </div>
+                    {riskiest && (
+                      <section className="rounded-lg border border-red-400/15 bg-red-400/5 p-5">
+                        <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-red-300">
+                          <TrendingDown size={15} />
+                          Highest risk detected
                         </div>
-                      );
-                    })()}
-
-                    {/* Recent Investigations */}
-                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-                      <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                        <Clock size={14} /> Recent Investigations
-                      </h3>
-                      <div className="space-y-2">
-                        {dashStats.slice(0, 5).map((h) => (
-                          <div
-                            key={h.job_id}
-                            className="flex items-center justify-between p-3 bg-neutral-950 rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
-                            onClick={() => {
-                              localStorage.setItem('investigate_url', '');
-                              localStorage.setItem('investigate_job_id', h.job_id);
-                              window.location.reload();
-                            }}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className={`w-2 h-2 rounded-full ${
-                                h.trust_score >= 75 ? 'bg-green-500' :
-                                h.trust_score >= 55 ? 'bg-yellow-500' :
-                                h.trust_score >= 30 ? 'bg-orange-500' : 'bg-red-500'
-                              }`} />
-                              <span className="font-semibold text-sm text-neutral-200">{h.company_name}</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                                h.risk_level.includes('HIGH') ? 'bg-red-500/10 text-red-400' :
-                                h.risk_level.includes('MEDIUM') ? 'bg-yellow-500/10 text-yellow-400' :
-                                'bg-green-500/10 text-green-400'
-                              }`}>{h.risk_level.replace(/_/g, ' ')}</span>
-                              <span className={`text-sm font-black ${
-                                h.trust_score >= 75 ? 'text-green-400' :
-                                h.trust_score >= 55 ? 'text-yellow-400' :
-                                h.trust_score >= 30 ? 'text-orange-400' : 'text-red-400'
-                              }`}>{h.trust_score}</span>
-                            </div>
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          <div>
+                            <h2 className="text-2xl font-semibold text-white">{riskiest.company_name}</h2>
+                            <p className="mt-1 text-sm text-slate-500">{riskiest.red_flags_count} red flags | {riskiest.risk_level.replace(/_/g, " ")}</p>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                          <div className="text-4xl font-semibold text-red-300">{riskiest.trust_score}<span className="text-base text-slate-600">/100</span></div>
+                        </div>
+                      </section>
+                    )}
                   </>
                 ) : (
-                  <div className="h-[400px] flex flex-col items-center justify-center border border-dashed border-neutral-800 rounded-3xl bg-neutral-900/20 text-neutral-500 text-center px-10">
-                    <Globe size={48} className="mb-4 opacity-10" />
-                    <p>Submit a company domain to start the autonomous investigation pipeline.</p>
-                  </div>
+                  <section className="grid min-h-[calc(100vh-120px)] place-items-center rounded-lg border border-dashed border-slate-800 bg-[#0b1224]/70 p-8 text-center">
+                    <div className="max-w-md">
+                      <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-lg border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                        <Globe size={30} />
+                      </div>
+                      <h2 className="text-2xl font-semibold text-white">Start a clean investigation flow</h2>
+                      <p className="mt-3 text-sm leading-6 text-slate-400">Enter a company domain and the report, evidence, graph, and AI chat will stay within easy reach.</p>
+                    </div>
+                  </section>
                 )}
               </div>
             )}
 
-            {jobId && (!report || report.status !== "complete") && (
-              <LoadingSkeleton steps={report?.steps} />
-            )}
+            {jobId && <ProgressCard report={report} />}
 
-            <AnimatePresence>
-              {report?.status === "complete" && (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-
-                  {/* Executive Summary Panel */}
-                  <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-xl mb-6">
-                    <div className="flex flex-wrap items-center justify-between mb-4 gap-4">
-                      <h3 className="text-white font-bold uppercase flex items-center gap-2">
-                        <ShieldAlert size={18} className="text-blue-500" /> Executive Summary
-                      </h3>
-                      <div className="flex gap-2">
-                        {report.tier && (
-                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                            {report.tier === 1 ? 'TIER 1: ENTERPRISE' : report.tier === 2 ? 'TIER 2: ESTABLISHED SME' : 'TIER 3: UNKNOWN'}
+            <AnimatePresence mode="wait">
+              {hasReport && (
+                <motion.div
+                  key="report"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-3"
+                >
+                  <section className="rounded-lg border border-slate-800 bg-[#0b1224]/95 p-5 shadow-xl shadow-black/20">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="mb-3 flex flex-wrap gap-2">
+                          <span className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1 text-[10px] font-bold uppercase text-slate-400">
+                            {report.company_name || "Investigated company"}
                           </span>
-                        )}
-                        {report.legitimacy_verdict && (
-                          <span className={`px-3 py-1 rounded-full text-xs font-bold border ${verdictColors[report.legitimacy_verdict] || verdictColors.UNCERTAIN}`}>
-                            {report.legitimacy_verdict.replace(/_/g, " ")}
-                          </span>
-                        )}
+                          {report.legitimacy_verdict && (
+                            <span className={`rounded-md border px-2.5 py-1 text-[10px] font-bold uppercase ${verdictClass(report.legitimacy_verdict)}`}>
+                              {report.legitimacy_verdict.replace(/_/g, " ")}
+                            </span>
+                          )}
+                          {report.tier && (
+                            <span className="rounded-md border border-blue-400/20 bg-blue-400/10 px-2.5 py-1 text-[10px] font-bold uppercase text-blue-200">
+                              {tierLabel(report.tier)}
+                            </span>
+                          )}
+                        </div>
+                        <h2 className="text-3xl font-semibold tracking-tight text-white">
+                          Trust score <span className={scoreClass(report.trust_score)}>{report.trust_score}/100</span>
+                        </h2>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+                          {report.ai_reasoning || "The report is ready. Review score factors, contradictions, public signals, and ask the investigator follow-up questions."}
+                        </p>
+                      </div>
+                      <div className={`rounded-lg border px-5 py-4 text-center ${riskClass(report.risk_level)}`}>
+                        <p className="text-[10px] font-bold uppercase">Risk level</p>
+                        <p className="mt-1 text-2xl font-semibold">{report.risk_level.replace(/_/g, " ")}</p>
                       </div>
                     </div>
-                    {report.ai_reasoning && (
-                      <div className="bg-neutral-950 p-5 rounded-xl border border-neutral-800 text-sm text-neutral-300 leading-relaxed relative">
-                        <div className="absolute top-0 left-0 w-1 h-full bg-blue-500/50 rounded-l-xl"></div>
-                        <span className="font-semibold text-blue-400 mr-2">AI Summary:</span>
-                        {report.ai_reasoning}
-                      </div>
-                    )}
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-4">
+                      <MetricCard label="Sources" value={sourceCount || 0} icon={Globe} />
+                      <MetricCard label="Pages" value={report.raw_data_summary?.pages_scraped ?? "N/A"} icon={FileText} />
+                      <MetricCard label="Red flags" value={report.red_flags?.length ?? 0} icon={AlertTriangle} tone={(report.red_flags?.length ?? 0) > 0 ? "bad" : "good"} />
+                      <MetricCard label="Conflicts" value={report.contradictions?.length ?? 0} icon={Activity} tone={(report.contradictions?.length ?? 0) > 0 ? "warn" : "good"} />
+                    </div>
+                  </section>
+
+                  <div className="grid grid-cols-3 gap-1 rounded-lg border border-slate-800 bg-[#0b1224]/95 p-1">
+                    {tabs.map(({ key, label, icon: Icon }) => (
+                      <button
+                        key={key}
+                        onClick={() => setActiveTab(key)}
+                        className={`inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition ${
+                          activeTab === key
+                            ? "bg-cyan-400 text-slate-950 shadow-lg shadow-cyan-500/20"
+                            : "text-slate-400 hover:bg-slate-800/70 hover:text-slate-100"
+                        }`}
+                      >
+                        <Icon size={15} />
+                        {label}
+                      </button>
+                    ))}
                   </div>
 
-                  {/* Score Breakdown Section */}
-                  <ScoreBreakdown
-                    score={report.trust_score}
-                    riskLevel={report.risk_level}
-                    breakdown={report.score_breakdown}
-                  />
-
-                  {/* Red Flags */}
-                  {(report.red_flags ?? []).length > 0 && (
-                    <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-6">
-                      <h3 className="text-red-400 text-xs font-bold uppercase mb-4 flex items-center gap-2">
-                        <AlertTriangle size={14} /> Red Flags Detected
-                      </h3>
-                      <div className="space-y-2">
-                        {(report.red_flags ?? []).map((f, i) => (
-                          <div key={i} className="text-sm text-red-200/70 flex gap-2">
-                            <span className="text-red-500">•</span> {f}
+                  {activeTab === "overview" && (
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+                      <ScoreBreakdown score={report.trust_score} riskLevel={report.risk_level} breakdown={report.score_breakdown} />
+                      <div className="space-y-3">
+                        <section className="rounded-lg border border-red-400/15 bg-red-400/5 p-4">
+                          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-red-200">
+                            <AlertTriangle size={15} />
+                            Red flags
                           </div>
-                        ))}
+                          {(report.red_flags ?? []).length > 0 ? (
+                            <div className="space-y-2">
+                              {report.red_flags.slice(0, 5).map((flag, index) => (
+                                <p key={index} className="rounded-md border border-red-400/10 bg-slate-950/60 p-2 text-xs leading-5 text-red-100/80">{flag}</p>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-400">No scoring red flags were detected.</p>
+                          )}
+                        </section>
+
+                        <section className="rounded-lg border border-emerald-400/15 bg-emerald-400/5 p-4">
+                          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-emerald-200">
+                            <CheckCircle2 size={15} />
+                            Legitimacy signals
+                          </div>
+                          {(report.legitimacy_signals ?? []).length > 0 ? (
+                            <div className="space-y-2">
+                              {report.legitimacy_signals?.slice(0, 5).map((signal, index) => (
+                                <p key={index} className="rounded-md border border-emerald-400/10 bg-slate-950/60 p-2 text-xs leading-5 text-emerald-100/80">{signal}</p>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-400">No explicit positive signals were returned.</p>
+                          )}
+                        </section>
                       </div>
                     </div>
                   )}
 
-                  {/* Legitimacy Signals */}
-                  {(report.legitimacy_signals ?? []).length > 0 && (
-                    <div className="bg-green-500/5 border border-green-500/20 rounded-2xl p-6">
-                      <h3 className="text-green-400 text-xs font-bold uppercase mb-4 flex items-center gap-2">
-                        <CheckCircle size={14} /> Legitimacy Signals
-                      </h3>
-                      <div className="space-y-2">
-                        {(report.legitimacy_signals ?? []).map((s, i) => (
-                          <div key={i} className="text-sm text-green-200/70 flex gap-2">
-                            <span className="text-green-500">✓</span> {s}
-                          </div>
-                        ))}
-                      </div>
+                  {activeTab === "evidence" && (
+                    <div className="space-y-3">
+                      <ContradictionTable contradictions={report.contradictions} redFlags={report.red_flags} />
+                      <ReviewsPanel report={report} />
                     </div>
                   )}
 
-                  {/* ContradictionTable Component */}
-                  <ContradictionTable contradictions={report.contradictions} redFlags={report.red_flags} />
-
-                  {/* Reviews & Sentiment Panel */}
-                  <ReviewsPanel report={report} />
-
-                  {/* Bottom Analysis Section: Graph & Chat */}
-                  <div className="grid md:grid-cols-2 gap-6">
-                    {/* Knowledge Graph */}
-                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-xl h-[500px] flex flex-col">
-                      <h3 className="text-sm font-bold text-neutral-500 mb-4 uppercase flex items-center gap-2">
-                        < Globe size={16} /> Knowledge Graph
-                      </h3>
-                      <div className="flex-1 bg-neutral-950 rounded-xl border border-neutral-800 overflow-hidden relative">
-                        <GraphView
-                          report={report}
-                        />
+                  {activeTab === "graph" && (
+                    <section className="h-[620px] rounded-lg border border-slate-800 bg-[#0b1224]/95 p-4">
+                      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-200">
+                        <Network size={15} className="text-cyan-300" />
+                        Knowledge graph
                       </div>
-                    </div>
-
-                    {/* Chat Panel */}
-                    <ChatPanel
-                      jobId={report.job_id}
-                      companyName={report.company_name}
-                      trustScore={report.trust_score}
-                      riskLevel={report.risk_level}
-                    />
-                  </div>
-
+                      <div className="h-[550px] overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+                        <GraphView report={report} />
+                      </div>
+                    </section>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
           </section>
+
+          <aside className="xl:sticky xl:top-3 xl:h-[calc(100vh-88px)]">
+            <section className="flex h-full min-h-[580px] flex-col overflow-hidden rounded-lg border border-slate-800 bg-[#0b1224]/95 shadow-2xl shadow-black/30">
+              {hasReport ? (
+                <ChatPanel
+                  jobId={report.job_id}
+                  companyName={report.company_name}
+                  trustScore={report.trust_score}
+                  riskLevel={report.risk_level}
+                  apiUrl={API_URL}
+                />
+              ) : (
+                <div className="grid h-full place-items-center p-8 text-center">
+                  <div>
+                    <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-lg border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                      <ShieldAlert size={27} />
+                    </div>
+                    <h2 className="text-lg font-semibold text-white">AI Investigator</h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-400">After the report is ready, chat remains pinned here so follow-up questions are immediate.</p>
+                  </div>
+                </div>
+              )}
+            </section>
+          </aside>
         </div>
       </div>
     </main>

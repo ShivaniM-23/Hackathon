@@ -4,17 +4,35 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import {
   ShieldAlert, GitCompare, Plus, Trash2, ArrowLeft,
   Activity, CheckCircle, AlertTriangle
 } from "lucide-react";
 
+interface CompareReport {
+  job_id: string;
+  status: string;
+  company_name?: string;
+  trust_score: number;
+  risk_level?: string;
+  legitimacy_verdict?: string;
+  tier?: number;
+  ai_reasoning?: string;
+  red_flags?: string[];
+  legitimacy_signals?: string[];
+  progress_steps?: string[];
+  score_breakdown?: Record<string, {
+    pct?: number;
+    score?: number;
+    max?: number;
+  }>;
+}
+
 export default function ComparePage() {
   const [urls, setUrls] = useState<string[]>(["", ""]);
   const [isComparing, setIsComparing] = useState(false);
   const [jobIds, setJobIds] = useState<string[]>([]);
-  const [reports, setReports] = useState<any[]>([]);
+  const [reports, setReports] = useState<CompareReport[]>([]);
 
   const addUrl = () => {
     if (urls.length < 3) setUrls([...urls, ""]);
@@ -51,8 +69,8 @@ export default function ComparePage() {
         });
         const data = await res.json();
         ids.push(data.job_id);
-      } catch (e) {
-        console.error("Failed to start job for", url, e);
+      } catch (error) {
+        console.error("Failed to start job for", url, error);
       }
     }
     setJobIds(ids);
@@ -63,7 +81,7 @@ export default function ComparePage() {
     if (jobIds.length === 0) return;
 
     const interval = setInterval(async () => {
-      const newReports = [];
+      const newReports: CompareReport[] = [];
       let allComplete = true;
 
       for (const id of jobIds) {
@@ -79,7 +97,7 @@ export default function ComparePage() {
           if (data.status !== "complete" && data.status !== "error") {
             allComplete = false;
           }
-        } catch (e) {
+        } catch {
           allComplete = false;
         }
       }
@@ -95,24 +113,20 @@ export default function ComparePage() {
     return () => clearInterval(interval);
   }, [jobIds]);
 
-  // Transform breakdown data for Radar Chart
-  const buildRadarData = () => {
+  const buildFactorRows = () => {
     if (reports.length < 2 || reports.some(r => r.status !== "complete")) return [];
 
-    // Assuming all reports have similar keys in score_breakdown
-    const categories = Object.keys(reports[0].score_breakdown || {}).map(k => k.replace(/_/g, " ").toUpperCase());
-
-    return categories.map(cat => {
-      const dataPoint: any = { category: cat };
-      reports.forEach((report, index) => {
-        const key = Object.keys(report.score_breakdown).find(k => k.replace(/_/g, " ").toUpperCase() === cat);
-        dataPoint[`Vendor ${index + 1} (${report.company_name})`] = key ? report.score_breakdown[key].pct : 0;
-      });
-      return dataPoint;
+    const keys = Array.from(new Set(reports.flatMap(report => Object.keys(report.score_breakdown || {}))));
+    return keys.slice(0, 8).map(key => {
+      return {
+        key,
+        label: key.replace(/_/g, " ").toUpperCase(),
+        values: reports.map(report => report.score_breakdown?.[key]?.pct ?? 0),
+      };
     });
   };
 
-  const radarData = buildRadarData();
+  const factorRows = buildFactorRows();
   const colors = ["#3b82f6", "#ef4444", "#10b981"]; // Blue, Red, Green
 
   return (
@@ -200,28 +214,38 @@ export default function ComparePage() {
           <AnimatePresence>
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
 
-              {/* Radar Chart Panel */}
+              {/* Factor Comparison Panel */}
               <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 flex flex-col md:flex-row items-center gap-8 shadow-2xl">
-                <div className="flex-1 w-full h-[400px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
-                      <PolarGrid stroke="#333" />
-                      <PolarAngleAxis dataKey="category" tick={{ fill: '#888', fontSize: 10 }} />
-                      <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#555' }} />
-                      <Tooltip contentStyle={{ backgroundColor: '#111', borderColor: '#333' }} />
-                      <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                      {reports.map((r, i) => (
-                        <Radar
-                          key={i}
-                          name={`Vendor ${i + 1} (${r.company_name})`}
-                          dataKey={`Vendor ${i + 1} (${r.company_name})`}
-                          stroke={colors[i]}
-                          fill={colors[i]}
-                          fillOpacity={0.3}
-                        />
-                      ))}
-                    </RadarChart>
-                  </ResponsiveContainer>
+                <div className="flex-1 w-full space-y-4">
+                  <div className="flex flex-wrap gap-3">
+                    {reports.map((report, index) => (
+                      <div key={report.job_id} className="flex items-center gap-2 text-xs text-neutral-400">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colors[index] }} />
+                        Vendor {index + 1}: {report.company_name}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-3">
+                    {factorRows.map((row) => (
+                      <div key={row.key} className="rounded-xl border border-neutral-800 bg-black p-3">
+                        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-neutral-500">{row.label}</div>
+                        <div className="space-y-2">
+                          {row.values.map((value, index) => (
+                            <div key={`${row.key}-${index}`} className="flex items-center gap-3">
+                              <span className="w-16 text-[10px] text-neutral-500">Vendor {index + 1}</span>
+                              <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-800">
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{ width: `${value}%`, backgroundColor: colors[index] }}
+                                />
+                              </div>
+                              <span className="w-9 text-right text-[10px] font-bold text-neutral-400">{value}%</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="flex-1 space-y-6">
@@ -247,7 +271,7 @@ export default function ComparePage() {
                             {r.trust_score}/100
                           </div>
                           <span className="text-xs font-bold px-2 py-1 bg-neutral-900 border border-neutral-800 rounded mt-1 inline-block">
-                            {r.legitimacy_verdict.replace(/_/g, " ")}
+                            {(r.legitimacy_verdict || "UNCERTAIN").replace(/_/g, " ")}
                           </span>
                         </div>
                       </div>
@@ -278,10 +302,10 @@ export default function ComparePage() {
                           <AlertTriangle size={14} /> Red Flags
                         </h5>
                         <ul className="space-y-2">
-                          {r.red_flags.length === 0 ? (
+                          {(r.red_flags ?? []).length === 0 ? (
                             <li className="text-xs text-neutral-600">No red flags detected.</li>
                           ) : (
-                            r.red_flags.slice(0, 3).map((flag: string, idx: number) => (
+                            (r.red_flags ?? []).slice(0, 3).map((flag: string, idx: number) => (
                               <li key={idx} className="text-xs text-red-400 flex gap-2">
                                 <span>•</span> <span>{flag}</span>
                               </li>
@@ -296,7 +320,7 @@ export default function ComparePage() {
                           <CheckCircle size={14} /> Legitimacy Signals
                         </h5>
                         <ul className="space-y-2">
-                          {r.legitimacy_signals.slice(0, 3).map((sig: string, idx: number) => (
+                          {(r.legitimacy_signals ?? []).slice(0, 3).map((sig: string, idx: number) => (
                             <li key={idx} className="text-xs text-green-400 flex gap-2">
                               <span>✓</span> <span>{sig}</span>
                             </li>

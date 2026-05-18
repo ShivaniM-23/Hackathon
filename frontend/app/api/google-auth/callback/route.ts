@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     })
     return res
 
-  } catch (error) {
+  } catch {
     return NextResponse.redirect(`${APP_URL}/login?error=auth_failed`)
   }
 }
